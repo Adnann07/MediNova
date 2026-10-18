@@ -145,6 +145,8 @@ button:disabled { cursor: not-allowed; }
 .question-composer input::placeholder { color: #aaa1a2; }
 .question-composer button { display: grid; width: 29px; height: 28px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 5px; color: #fff; background: #d65c58; cursor: pointer; }
 .question-composer button:disabled { color: #c0b8b8; background: #f3f0f0; }
+.patient-microphone { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; }
+.patient-listening { margin: 6px 0 0; }
 .suggestion-label { display: block; margin: 12px 0 6px; color: #aaa1a1; font-size: 7px; font-weight: 700; letter-spacing: .7px; }
 .suggestion-list { display: flex; flex-direction: column; gap: 5px; }
 .suggestion-list button { display: flex; align-items: center; gap: 7px; min-height: 27px; border: 1px solid #f0ebea; border-radius: 5px; padding: 5px 7px; color: #706667; background: #fff; text-align: left; font-size: 8px; cursor: pointer; transition: background .15s,border .15s; }
@@ -153,7 +155,8 @@ button:disabled { cursor: not-allowed; }
 .suggestion-list button:disabled { opacity: .55; cursor: not-allowed; }
 .lab-section { padding: 12px 0 11px; border-top: 1px solid #f0ebea; }
 .lab-order-controls { display: flex; gap: 6px; }
-.lab-order-controls select { min-width: 0; flex: 1; appearance: none; border: 1px solid #eee8e7; border-radius: 5px; padding: 8px 9px; color: #655c5d; background: #fdfcfc; font-size: 8px; }
+.lab-order-controls input { min-width: 0; flex: 1; border: 1px solid #eee8e7; border-radius: 5px; padding: 8px 9px; color: #655c5d; background: #fdfcfc; font: 8px 'DM Sans',sans-serif; }
+.lab-order-controls input::placeholder, .medicine-order-form input::placeholder { color: #aaa1a2; }
 .lab-order-controls button { flex: 0 0 auto; border: 1px solid #eedbd9; border-radius: 5px; padding: 0 10px; color: #c45652; background: #fff7f6; font-size: 8px; font-weight: 600; cursor: pointer; }
 .lab-order-controls button:disabled { border-color: #eee8e7; color: #aaa1a2; background: #f5f2f2; }
 .lab-error { margin: 7px 0 0; color: #b94b47; font-size: 8px; line-height: 1.5; }
@@ -170,7 +173,7 @@ button:disabled { cursor: not-allowed; }
 .lab-result > small { color: #a19898; font-size: 7px; line-height: 1.4; }
 .medication-section { padding: 12px 0 11px; border-top: 1px solid #f0ebea; }
 .medicine-order-form { display: flex; flex-direction: column; gap: 6px; }
-.medicine-order-form select, .medicine-order-form textarea { width: 100%; border: 1px solid #eee8e7; border-radius: 5px; padding: 8px 9px; color: #655c5d; background: #fdfcfc; font: 8px/1.5 'DM Sans',sans-serif; }
+.medicine-order-form input, .medicine-order-form textarea { width: 100%; border: 1px solid #eee8e7; border-radius: 5px; padding: 8px 9px; color: #655c5d; background: #fdfcfc; font: 8px/1.5 'DM Sans',sans-serif; }
 .medicine-order-form textarea { resize: vertical; }
 .medicine-order-form button { align-self: flex-end; border: 1px solid #eedbd9; border-radius: 5px; padding: 7px 10px; color: #c45652; background: #fff7f6; font-size: 8px; font-weight: 600; cursor: pointer; }
 .medicine-order-form button:disabled { border-color: #eee8e7; color: #aaa1a2; background: #f5f2f2; cursor: not-allowed; }
@@ -185,7 +188,7 @@ button:disabled { cursor: not-allowed; }
 .assessment-section textarea { display: block; width: 100%; resize: vertical; min-height: 60px; border: 1px solid #eee8e7; border-radius: 6px; padding: 8px; color: #514849; background: #fdfcfc; font-size: 9px; line-height: 1.5; }
 .assessment-section textarea::placeholder { color: #aaa1a1; }
 .assessment-section textarea + .plan-label { display: block; margin: 9px 0 5px; color: #a69d9d; font-size: 7px; font-weight: 700; letter-spacing: .55px; line-height: 1.4; }
-.assessment-section textarea:disabled, .question-composer input:disabled, .lab-order-controls select:disabled { color: #938a8a; opacity: .7; }
+.assessment-section textarea:disabled, .question-composer input:disabled, .lab-order-controls input:disabled { color: #938a8a; opacity: .7; }
 .debrief-button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 37px; margin-top: auto; border: 0; border-radius: 6px; padding: 0 11px; color: #fff; background: #d65c58; font-size: 9px; font-weight: 600; cursor: pointer; transition: background .15s,transform .15s; }
 .debrief-button:not(:disabled):hover { transform: translateY(-1px); background: #c64f4b; }
 .debrief-button:disabled { color: #aaa1a2; background: #f2eeee; }
@@ -235,6 +238,12 @@ button:disabled { cursor: not-allowed; }
 .decision-review > div { padding: 9px; border: 1px solid #f0ebea; border-radius: 6px; background: #fdfcfc; }
 .decision-review > div > span { color: #a19798; font-size: 7px; font-weight: 700; letter-spacing: .55px; line-height: 1.5; }
 .decision-review p { margin: 5px 0 0; color: #6d6465; font-size: 8px; line-height: 1.55; }
+.answer-key { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; border: 1px solid #eee6df; border-radius: 7px; padding: 11px; background: #fffcf8; }
+.answer-key h3 { margin: 0; color: #625551; font: 700 10px 'Manrope',sans-serif; }
+.answer-key > div { display: flex; flex-direction: column; gap: 4px; }
+.answer-key > div > strong { color: #8d7770; font-size: 7px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; }
+.answer-key p { margin: 0; color: #6d6465; font-size: 8px; line-height: 1.55; }
+.answer-key > small { color: #9a9091; font-size: 7px; line-height: 1.5; }
 .debrief-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 17px; margin: 17px 0; }
 .debrief-metrics > div { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .debrief-metrics > div > strong { color: #51494a; font-size: 9px; font-weight: 600; line-height: 1.5; }

@@ -16,6 +16,41 @@ function safeId(value, fallback) {
   return slug || fallback;
 }
 
+function normalizeOrderName(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function findMatchingTest(caseFile, name) {
+  const normalizedName = normalizeOrderName(name);
+  return caseFile.tests.find((test) => {
+    const normalizedTestName = normalizeOrderName(test.name);
+    return normalizedName === normalizedTestName
+      || (normalizedName.length >= 5 && normalizedTestName.includes(normalizedName));
+  });
+}
+
+function normalizeQuestion(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isOnsetTopic(topic) {
+  return /\b(onset|duration|timeline|time course)\b/i.test(`${topic.id} ${topic.label}`);
+}
+
+export function matchPatientTopic(topics, question) {
+  const normalizedQuestion = normalizeQuestion(question);
+  const onsetQuestion = /\bhow long\b|\bsince when\b|\bhow many (?:days?|weeks?|months?|years?)\b|\b(?:onset|duration)\b|\bwhen did (?:it|this|the symptoms?) (?:first )?(?:start|begin|appear)\b|\bwhen (?:did it|did this) (?:start|begin|first appear)\b/i.test(question);
+  if (onsetQuestion) {
+    const onsetTopic = topics.find(isOnsetTopic);
+    if (onsetTopic) return onsetTopic;
+  }
+
+  return topics.find((topic) => topic.keywords.some((keyword) => {
+    const normalizedKeyword = normalizeQuestion(keyword);
+    return normalizedKeyword && ` ${normalizedQuestion} `.includes(` ${normalizedKeyword} `);
+  }));
+}
+
 function normalizeReferences(references) {
   if (!Array.isArray(references) || references.length < 1 || references.length > 3) {
     throw new Error('AI-generated case must include 1-3 clinical references.');
@@ -110,6 +145,9 @@ export function normalizeGeneratedCases(payload, batchId) {
     const caseId = `${batchId}-${index + 1}-${safeId(title, 'practice-case')}`;
     const initials = patientName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
     const topics = item.topics.map(normalizeTopic);
+    if (!topics.some(isOnsetTopic)) {
+      throw new Error('AI-generated patient cases must include an onset and duration interview topic.');
+    }
     if (new Set(topics.map((topic) => topic.id)).size !== topics.length) {
       throw new Error('AI-generated case contains duplicate interview topic IDs.');
     }
@@ -154,6 +192,7 @@ export function normalizeGeneratedCases(payload, batchId) {
 }
 
 export function toPublicCase(caseFile) {
+  const opening = caseFile.opening.replace(/^doctor[,.…:\s]*/i, '').trim();
   return {
     id: caseFile.id,
     title: caseFile.title,
@@ -163,11 +202,9 @@ export function toPublicCase(caseFile) {
     initials: caseFile.initials,
     accent: caseFile.accent,
     hairStyle: caseFile.hairStyle,
-    opening: caseFile.opening,
+    opening: `Doctor, ${opening}`,
     topics: caseFile.topics,
     suggested: caseFile.suggested,
     learning: caseFile.learning,
-    tests: caseFile.tests.map(({ id, name }) => ({ id, name })),
-    medications: caseFile.medications,
   };
 }

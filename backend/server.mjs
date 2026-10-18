@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { normalizeGeneratedCases, toPublicCase } from './cases.mjs';
+import { findMatchingTest, normalizeGeneratedCases, toPublicCase } from './cases.mjs';
 import {
   createKnowledgeChunks,
   discussionDoctors,
@@ -129,7 +129,7 @@ Return only valid JSON with a top-level "cases" array containing exactly one cas
 Requirements:
 - Choose a distinct symptom pattern and clinical category (for example primary care, cardiology, respiratory, neurology, gastroenterology, infectious disease, endocrine, renal, musculoskeletal, or dermatology). Do not repeat diagnoses or symptom patterns from the prior cases.
 - All patients are fictional adults aged 18-90. Use varied names, ages, backgrounds, and avatar choices. Do not include pronouns or gender identity fields. Avatar accent must be one of coral, blue, sage, plum, gold, teal. hairStyle must be one of short, long, curly, covered.
-- Include 5-7 interview topics with distinct IDs, several short question keywords, and consistent patient answers. Do not disclose the hidden reference diagnosis in the opening statement or answers.
+- Include 5-7 interview topics with distinct IDs, several short question keywords, and consistent patient answers. The first topic must have id "onset", label "Onset and duration", keywords covering "how long", "when", "start", and "since", and an answer that directly states when the symptom began/how long it has lasted, consistent with the case. Do not disclose the hidden reference diagnosis in the opening statement or answers.
 - Include 3-4 suggested questions that correspond to topics.
 - Include EXACTLY TWO simple investigations in the tests array. Each must have a text-only name (such as a blood test, urine test, or textual ECG interpretation), 1-3 textual findings, and a cautious fictional summary. Do NOT include imaging, scans, x-rays, photographs, or image-based results. Findings and summary must be medically cautious; do not invent emergency exclusions or definitive diagnoses from a single test.
 - Include 1-3 generic medicine/class choices that could be discussed for this fictional scenario, or an empty list if medication is not appropriate. Give no doses, frequencies, routes, durations, prescriptions, controlled drugs, or certainty that treatment is safe. These are educational choices only.
@@ -408,12 +408,14 @@ function validatePayload(payload) {
     throw Object.assign(new Error('Add a clinical interpretation and next-step plan of up to 3,000 characters.'), { status: 400 });
   }
 
-  if (!Array.isArray(payload.labOrders) || payload.labOrders.length < 1 || payload.labOrders.length > caseFile.tests.length) {
-    throw Object.assign(new Error('Order and review at least one available simulated test before assessment.'), { status: 400 });
+  if (!Array.isArray(payload.labOrders) || payload.labOrders.length < 1 || payload.labOrders.length > 8) {
+    throw Object.assign(new Error('Order and review between one and eight simulated tests before assessment.'), { status: 400 });
   }
-  const labOrderIds = payload.labOrders.map((id) => typeof id === 'string' ? id : '');
-  if (new Set(labOrderIds).size !== labOrderIds.length || labOrderIds.some((id) => !caseFile.tests.some((test) => test.id === id))) {
-    throw Object.assign(new Error('The lab order list contains a duplicate or unavailable test.'), { status: 400 });
+  const labOrderNames = payload.labOrders.map((name) => typeof name === 'string' ? name.trim() : '');
+  const normalizedLabNames = labOrderNames.map((name) => name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
+  if (labOrderNames.some((name) => !name || name.length > 120)
+    || new Set(normalizedLabNames).size !== normalizedLabNames.length) {
+    throw Object.assign(new Error('The lab order list contains an invalid or duplicate test name.'), { status: 400 });
   }
 
   if (!Array.isArray(payload.messages) || payload.messages.length < 4 || payload.messages.length > 60) {
@@ -431,21 +433,30 @@ function validatePayload(payload) {
     throw Object.assign(new Error('The conversation must alternate between doctor and patient.'), { status: 400 });
   }
 
-  const labOrders = labOrderIds.map((id) => caseFile.tests.find((test) => test.id === id));
+  const labOrders = labOrderNames.map((name) => {
+    const test = findMatchingTest(caseFile, name);
+    return {
+      id: test?.id ?? null,
+      name,
+      findings: test?.findings ?? [],
+      expectedSummary: test?.expectedSummary ?? '',
+    };
+  });
   const medicationOrders = Array.isArray(payload.medicationOrders) ? payload.medicationOrders : [];
-  if (medicationOrders.length > caseFile.medications.length) {
+  if (medicationOrders.length > 8) {
     throw Object.assign(new Error('The medicine order list contains too many items.'), { status: 400 });
   }
   const normalizedMedicationOrders = medicationOrders.map((order) => {
-    const id = typeof order?.id === 'string' ? order.id : '';
-    const medication = caseFile.medications.find((item) => item.id === id);
+    const name = typeof order?.name === 'string' ? order.name.trim() : '';
     const reason = typeof order?.reason === 'string' ? order.reason.trim() : '';
-    if (!medication || !reason || reason.length > 500) {
-      throw Object.assign(new Error('A simulated medicine order has an unavailable medicine or invalid rationale.'), { status: 400 });
+    if (!name || name.length > 120 || !reason || reason.length > 500
+      || /\b\d+(?:\.\d+)?\s?(?:mg|mcg|micrograms?|g|ml|millilit(?:er|re)s?)\b/i.test(name)) {
+      throw Object.assign(new Error('A simulated medicine order has an invalid name or rationale; do not include a dose.'), { status: 400 });
     }
-    return { id, name: medication.name, reason };
+    return { name, reason };
   });
-  if (new Set(normalizedMedicationOrders.map((order) => order.id)).size !== normalizedMedicationOrders.length) {
+  const normalizedMedicationNames = normalizedMedicationOrders.map((order) => order.name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
+  if (new Set(normalizedMedicationNames).size !== normalizedMedicationNames.length) {
     throw Object.assign(new Error('A medicine may only be ordered once in this practice case.'), { status: 400 });
   }
   return { caseId, caseFile, difficulty, impression, clinicalPlan, messages, labOrders, medicationOrders: normalizedMedicationOrders };
@@ -489,7 +500,7 @@ async function fetchReferences(references) {
   }));
 }
 
-function parseModelEvaluation(text, references) {
+function parseModelEvaluation(text, references, caseFile) {
   const jsonText = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   let evaluation;
   try {
@@ -504,6 +515,24 @@ function parseModelEvaluation(text, references) {
     && items.length > 0
     && items.length <= 6
     && items.every((item) => typeof item?.text === 'string' && item.text.trim() && hasValidEvidence(item.evidence_ids));
+  const validateAnswerItems = (items, allowedNames) => Array.isArray(items)
+    && items.length <= 5
+    && items.every((item) => typeof item?.name === 'string'
+      && allowedNames.includes(item.name)
+      && typeof item.reason === 'string'
+      && item.reason.trim()
+      && item.reason.length <= 600
+      && hasValidEvidence(item.evidence_ids));
+  const expectedInvestigationNames = caseFile.tests.map((test) => test.name);
+  const allowedMedicineNames = caseFile.medications.map((medicine) => medicine.name);
+  const answerKey = evaluation.answer_key;
+  const validAnswerKey = Array.isArray(answerKey?.investigations)
+    && answerKey.investigations.length === expectedInvestigationNames.length
+    && validateAnswerItems(answerKey.investigations, expectedInvestigationNames)
+    && new Set(answerKey.investigations.map((item) => item.name)).size === expectedInvestigationNames.length
+    && expectedInvestigationNames.every((name) => answerKey.investigations.some((item) => item.name === name))
+    && validateAnswerItems(answerKey.medicines, allowedMedicineNames)
+    && new Set(answerKey.medicines.map((item) => item.name)).size === answerKey.medicines.length;
 
   const breakdown = evaluation.score_breakdown;
   const validScore = (value, maximum) => Number.isInteger(value) && value >= 0 && value <= maximum;
@@ -529,7 +558,8 @@ function parseModelEvaluation(text, references) {
     || !validateFeedback(evaluation.strengths)
     || !validateFeedback(evaluation.growth_areas)
     || typeof evaluation.next_time !== 'string' || !evaluation.next_time.trim()
-    || !hasValidEvidence(evaluation.next_time_evidence_ids)) {
+    || !hasValidEvidence(evaluation.next_time_evidence_ids)
+    || !validAnswerKey) {
     throw new Error('AI provider returned an incomplete or uncited assessment. No assessment was saved.');
   }
 
@@ -559,11 +589,33 @@ function parseModelEvaluation(text, references) {
     growth_areas: evaluation.growth_areas.map((item) => ({ text: item.text.trim(), evidence_ids: item.evidence_ids })),
     next_time: evaluation.next_time.trim(),
     next_time_evidence_ids: evaluation.next_time_evidence_ids,
+    answer_key: {
+      investigations: evaluation.answer_key.investigations.map((item) => ({
+        name: item.name,
+        reason: item.reason.trim(),
+        evidence_ids: item.evidence_ids,
+      })),
+      medicines: evaluation.answer_key.medicines.map((item) => ({
+        name: item.name,
+        reason: item.reason.trim(),
+        evidence_ids: item.evidence_ids,
+      })),
+    },
     references: references.map(({ id, title, publisher, url }) => ({ id, title, publisher, url })),
   };
 }
 
-async function generateLabReport(test) {
+async function generateLabReport(test, requestedName) {
+  if (!test) {
+    return {
+      test_id: `unavailable-${randomUUID()}`,
+      test_name: requestedName,
+      findings: [],
+      summary: 'No simulated result is available for this order.',
+      simulated: true,
+      note: 'This fictional order will still be included in your assessment.',
+    };
+  }
   return {
     test_id: test.id,
     test_name: test.name,
@@ -585,20 +637,23 @@ async function evaluateWithAI({ caseFile, difficulty, impression, clinicalPlan, 
 
 Use ONLY the supplied case reference pattern and retrieved public guidance below as your clinical evidence. Do not invent references, sources, URLs, recommendations, or facts absent from the supplied sources. Evaluate the learner's history-taking, test selection, test interpretation, and stated provisional impression against the reference pattern. Reward uncertainty and safe recognition of warning signs; do not reward a lucky diagnosis without supporting questions. Evaluate the learner's proposed medication plan and fictional medicine orders against the sources without adding a new prescription, dose, or treatment recommendation.
 
-Every evaluative statement must be supported with one or more reference IDs from the retrieved pages. Return only JSON. Every evidence_ids array must contain valid IDs from the supplied sources. If the source text does not support a point, do not make that point.
+Every evaluative statement and answer-key reason must be supported with one or more reference IDs from the retrieved pages. Return only JSON. Every evidence_ids array must contain valid IDs from the supplied sources. If the source text does not support a point, do not make that point.
 
 Return this exact shape:
-{"score_breakdown":{"impression":0,"history":0,"investigations":0,"safety_and_plan":0,"impression_evidence_ids":["R1"],"history_evidence_ids":["R1"],"investigations_evidence_ids":["R1"],"safety_and_plan_evidence_ids":["R1"]},"score_rationale":"Evidence-backed explanation of the score","score_evidence_ids":["R1"],"summary":"Concise overall feedback","summary_evidence_ids":["R1"],"diagnosis_assessment":"How well the impression fits the case, including uncertainty","diagnosis_evidence_ids":["R1"],"investigation_assessment":"Assessment of test selection and result interpretation","investigation_evidence_ids":["R1"],"plan_assessment":"Assessment of the proposed next step and medicine plan; no new prescription","plan_evidence_ids":["R1"],"strengths":[{"text":"Evidence-based strength","evidence_ids":["R1"]}],"growth_areas":[{"text":"Evidence-based learning opportunity","evidence_ids":["R1"]}],"next_time":"One specific question or reasoning step to try next time","next_time_evidence_ids":["R1"]}
+{"score_breakdown":{"impression":0,"history":0,"investigations":0,"safety_and_plan":0,"impression_evidence_ids":["R1"],"history_evidence_ids":["R1"],"investigations_evidence_ids":["R1"],"safety_and_plan_evidence_ids":["R1"]},"score_rationale":"Evidence-backed explanation of the score","score_evidence_ids":["R1"],"summary":"Concise overall feedback","summary_evidence_ids":["R1"],"diagnosis_assessment":"How well the impression fits the case, including uncertainty","diagnosis_evidence_ids":["R1"],"investigation_assessment":"Assessment of test selection and result interpretation","investigation_evidence_ids":["R1"],"plan_assessment":"Assessment of the proposed next step and medicine plan; no new prescription","plan_evidence_ids":["R1"],"answer_key":{"investigations":[{"name":"Exact name from the case investigation list","reason":"Evidence-backed educational rationale","evidence_ids":["R1"]}],"medicines":[{"name":"Exact name from the case medicine list","reason":"Evidence-backed educational consideration, no dose","evidence_ids":["R1"]}]},"strengths":[{"text":"Evidence-based strength","evidence_ids":["R1"]}],"growth_areas":[{"text":"Evidence-based learning opportunity","evidence_ids":["R1"]}],"next_time":"One specific question or reasoning step to try next time","next_time_evidence_ids":["R1"]}
 
 Score with this fixed rubric and return integer component scores: working impression (0-30), relevant history-taking (0-25), test selection and interpretation (0-25), and safety / clinical decision / medication reasoning (0-20). Total score is the sum of those components. Do not reward unasked history, inappropriate testing, unsafe plans, unsupported diagnoses, or medication orders that are not justified by this simulated case. Do not provide doses or new prescribing advice. Include a score rationale, 1-4 strengths, 1-4 growth areas, and citations in every evidence array. Do not output the hidden reference diagnosis verbatim unless the learner's interview reasonably supports revealing it in this debrief.
+For answer_key.investigations, include every investigation from the case's expected-investigation list exactly once, using its exact name. Give a concise rationale for each, supported by the retrieved web references. For answer_key.medicines, include only case medicine options that are supported by the retrieved sources and relevant to this fictional case; use exact catalog names, no doses, and return an empty array if none are supported. These are educational answer comparisons, not orders or prescribing advice.
 
 Case title: ${caseFile.title}
 Hidden reference pattern (for your assessment only): ${caseFile.referencePattern}
 Fictional case context: ${caseFile.clinicalContext}
 Relevant history-taking domains: ${caseFile.topics.map((topic) => topic.label).join('; ')}
 Learner-selected difficulty: ${difficulty}
-Ordered fictional text-based test results: ${JSON.stringify(labOrders.map(({ id, name, findings, expectedSummary }) => ({ id, name, findings, summary: expectedSummary })))}
-Learner's fictional medicine orders (may be empty; no doses are included): ${JSON.stringify(medicationOrders)}
+Learner's free-text investigation orders and simulated results: ${JSON.stringify(labOrders.map(({ name, findings, expectedSummary }) => ({ name, findings, summary: expectedSummary || 'No simulated result is available for this order.' })))}
+Expected-investigation list for the answer key: ${JSON.stringify(caseFile.tests.map(({ name, expectedSummary }) => ({ name, expectedSummary })))}
+Allowed answer-key medicine options: ${JSON.stringify(caseFile.medications.map(({ name, indication }) => ({ name, indication })))}
+Learner's free-text fictional medicine orders and rationales (may be empty; no doses are included): ${JSON.stringify(medicationOrders)}
 Learner's test interpretation and next clinical decision: ${clinicalPlan}
 Learner's working impression: ${impression}
 
@@ -611,12 +666,12 @@ ${evidence}`;
   try {
     const text = await requestModelText({
       prompt,
-      generationConfig: { temperature: 0.2, maxOutputTokens: 1400 },
+      generationConfig: { temperature: 0.2, maxOutputTokens: 2200 },
       signal: controller.signal,
       operation: 'assessment',
     });
     if (!text) throw new Error('AI provider returned no assessment text. Please try again.');
-    return parseModelEvaluation(text, references);
+    return parseModelEvaluation(text, references, caseFile);
   } finally {
     clearTimeout(timer);
   }
@@ -789,27 +844,18 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
-  const testMenuMatch = request.method === 'GET' && request.url.match(/^\/api\/cases\/([^/]+)\/tests$/);
-  if (testMenuMatch) {
-    const caseFile = evaluationCases.get(decodeURIComponent(testMenuMatch[1]));
-    if (!caseFile) {
-      sendJson(response, 404, { error: 'Practice case not found.' });
-      return;
-    }
-    sendJson(response, 200, { tests: caseFile.tests.map(({ id, name }) => ({ id, name })) });
-    return;
-  }
   if (request.method === 'POST' && request.url === '/api/labs/order') {
     try {
       loadLocalEnvironment();
       const payload = await readJson(request);
       const caseFile = evaluationCases.get(payload?.caseId);
-      const test = caseFile?.tests.find((item) => item.id === payload?.testId);
-      if (!caseFile || !test) {
-        sendJson(response, 400, { error: 'Choose a test available for this practice case.' });
+      const testName = typeof payload?.testName === 'string' ? payload.testName.trim() : '';
+      if (!caseFile || !testName || testName.length > 120) {
+        sendJson(response, 400, { error: 'Enter a test name for this practice case.' });
         return;
       }
-      sendJson(response, 200, await generateLabReport(test));
+      const test = findMatchingTest(caseFile, testName);
+      sendJson(response, 200, await generateLabReport(test, testName));
     } catch (error) {
       const status = error.status || 502;
       if (status >= 500) console.error('Lab simulation failed:', error);
@@ -822,15 +868,16 @@ const server = createServer(async (request, response) => {
       loadLocalEnvironment();
       const payload = await readJson(request);
       const caseFile = evaluationCases.get(payload?.caseId);
-      const medication = caseFile?.medications.find((item) => item.id === payload?.medicationId);
+      const medicationName = typeof payload?.medicationName === 'string' ? payload.medicationName.trim() : '';
       const reason = typeof payload?.reason === 'string' ? payload.reason.trim() : '';
-      if (!caseFile || !medication || !reason || reason.length > 500) {
-        sendJson(response, 400, { error: 'Choose an available fictional medicine and provide a brief rationale.' });
+      if (!caseFile || !medicationName || medicationName.length > 120 || !reason || reason.length > 500
+        || /\b\d+(?:\.\d+)?\s?(?:mg|mcg|micrograms?|g|ml|millilit(?:er|re)s?)\b/i.test(medicationName)) {
+        sendJson(response, 400, { error: 'Enter a medicine name and brief rationale without a dose.' });
         return;
       }
       sendJson(response, 200, {
-        id: medication.id,
-        name: medication.name,
+        id: randomUUID(),
+        name: medicationName,
         reason,
         simulated: true,
         note: 'Fictional educational order only. No dose or real prescription has been created.',

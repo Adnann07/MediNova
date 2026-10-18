@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeGeneratedCases } from './cases.mjs';
+import { findMatchingTest, matchPatientTopic, normalizeGeneratedCases, toPublicCase } from './cases.mjs';
 
 function makeCase(overrides = {}) {
   return {
@@ -13,10 +13,10 @@ function makeCase(overrides = {}) {
     avatar: { accent: 'teal', hairStyle: 'curly' },
     opening: 'I have had this symptom for a few days.',
     topics: Array.from({ length: 5 }, (_, index) => ({
-      id: `topic-${index}`,
-      label: `History area ${index}`,
-      keywords: [`topic ${index}`],
-      answer: `Fictional answer ${index}.`,
+      id: index === 0 ? 'onset' : `topic-${index}`,
+      label: index === 0 ? 'Onset and duration' : `History area ${index}`,
+      keywords: index === 0 ? ['how long', 'when', 'start', 'since'] : [`topic ${index}`],
+      answer: index === 0 ? 'It started a few days ago.' : `Fictional answer ${index}.`,
     })),
     suggested: ['When did this begin?', 'What makes it change?', 'What else have you noticed?'],
     tests: [
@@ -43,6 +43,7 @@ test('normalizes a batch of AI-created adult cases and assigns unique case IDs',
   assert.equal(cases[0].initials, 'AE');
   assert.equal(cases[0].references[0].id, 'R1');
   assert.equal(cases[0].tests[0].findings[0].value, 'Fictional text result');
+  assert.equal(toPublicCase(cases[0]).opening, 'Doctor, I have had this symptom for a few days.');
 });
 
 test('normalizes one AI-created case for on-demand case generation', () => {
@@ -56,6 +57,45 @@ test('does not require or expose patient pronouns', () => {
     cases: [makeCase({ patient: { name: 'Alex Example', age: 34, pronouns: 'they/them' } })],
   }, 'pronouns');
   assert.equal(Object.hasOwn(caseFile, 'pronouns'), false);
+});
+
+test('keeps answer-key test and medicine options private until debrief', () => {
+  const [caseFile] = normalizeGeneratedCases({ cases: [makeCase()] }, 'private');
+  const publicCase = toPublicCase(caseFile);
+  assert.equal(Object.hasOwn(publicCase, 'tests'), false);
+  assert.equal(Object.hasOwn(publicCase, 'medications'), false);
+});
+
+test('adds the Doctor greeting once to patient opening speech', () => {
+  const [caseFile] = normalizeGeneratedCases({
+    cases: [makeCase({ opening: 'Doctor... I have felt tired this week.' })],
+  }, 'opening');
+  assert.equal(toPublicCase(caseFile).opening, 'Doctor, I have felt tired this week.');
+});
+
+test('routes natural duration questions to the onset and duration answer', () => {
+  const [caseFile] = normalizeGeneratedCases({ cases: [makeCase()] }, 'duration');
+  const onset = caseFile.topics[0];
+  for (const question of [
+    'How long has it been since you first noticed this issue?',
+    'When did this start?',
+    'How many days have you had these symptoms?',
+    'What is the duration of the problem?',
+  ]) {
+    assert.equal(matchPatientTopic(caseFile.topics, question), onset, question);
+  }
+});
+
+test('matches patient keywords as whole words instead of accidental substrings', () => {
+  const topics = [{ id: 'pain', label: 'Pain', keywords: ['pain'], answer: 'Fictional.' }];
+  assert.equal(matchPatientTopic(topics, 'I enjoy painting.'), undefined);
+  assert.equal(matchPatientTopic(topics, 'I have pain.'), topics[0]);
+});
+
+test('matches free-text lab orders without exposing an order menu', () => {
+  const [caseFile] = normalizeGeneratedCases({ cases: [makeCase()] }, 'orders');
+  assert.equal(findMatchingTest(caseFile, 'Text-based blood test').id, caseFile.tests[0].id);
+  assert.equal(findMatchingTest(caseFile, 'unavailable test'), undefined);
 });
 
 test('rejects image-based investigations', () => {

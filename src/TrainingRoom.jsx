@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { matchPatientTopic } from '../backend/cases.mjs';
 
 const apiBase = 'http://127.0.0.1:8787/api';
+const normalizeOrderName = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function Icon({ name, size = 18 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
@@ -9,6 +11,7 @@ function Icon({ name, size = 18 }) {
     spark: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 16 .9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16Z" /></>,
     chevron: <path d="m7 10 5 5 5-5" />,
     sound: <><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></>,
+    microphone: <><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" /></>,
     stop: <><rect x="6" y="6" width="12" height="12" rx="2" /></>,
     send: <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>,
     check: <path d="m5 12 4 4L19 6" />,
@@ -57,8 +60,7 @@ function PatientAvatar({ accent, hairStyle, speaking }) {
 }
 
 function getReply(caseFile, question, difficulty) {
-  const query = question.toLowerCase();
-  const topic = caseFile.topics.find((item) => item.keywords.some((keyword) => query.includes(keyword)));
+  const topic = matchPatientTopic(caseFile.topics, question);
   if (topic) {
     const answer = difficulty === 'Advanced'
       ? `${topic.answer.split(/[.!?]/)[0]}.`
@@ -92,10 +94,10 @@ function TrainingRoom() {
   const [impression, setImpression] = useState('');
   const [clinicalPlan, setClinicalPlan] = useState('');
   const [labOrders, setLabOrders] = useState([]);
-  const [selectedTest, setSelectedTest] = useState('');
+  const [testName, setTestName] = useState('');
   const [labLoading, setLabLoading] = useState(false);
   const [labError, setLabError] = useState('');
-  const [selectedMedication, setSelectedMedication] = useState('');
+  const [medicationName, setMedicationName] = useState('');
   const [medicationReason, setMedicationReason] = useState('');
   const [medicationOrders, setMedicationOrders] = useState([]);
   const [medicationLoading, setMedicationLoading] = useState(false);
@@ -105,10 +107,15 @@ function TrainingRoom() {
   const [assessmentLoading, setAssessmentLoading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [audioError, setAudioError] = useState('');
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
   const caseFile = cases.find((item) => item.id === caseId);
   const askedTopics = useMemo(() => new Set(messages.filter((message) => message.role === 'doctor' && message.topic !== 'rapport').map((message) => message.topic)), [messages]);
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  useEffect(() => () => {
+    window.speechSynthesis?.cancel();
+    recognitionRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,15 +158,18 @@ function TrainingRoom() {
 
   function changeCase(nextCase) {
     window.speechSynthesis?.cancel();
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setListening(false);
     setCaseId(nextCase);
     setMessages([]);
     setQuestion('');
     setImpression('');
     setClinicalPlan('');
     setLabOrders([]);
-    setSelectedTest('');
+    setTestName('');
     setMedicationOrders([]);
-    setSelectedMedication('');
+    setMedicationName('');
     setMedicationReason('');
     setLabError('');
     setMedicationError('');
@@ -169,12 +179,12 @@ function TrainingRoom() {
     setAudioError('');
   }
 
-  function speak(text) {
+  function speak(text, allowToggle = true) {
     if (!('speechSynthesis' in window)) {
       setAudioError('Speech playback is not available in this browser.');
       return;
     }
-    if (speaking) {
+    if (speaking && allowToggle) {
       window.speechSynthesis.cancel();
       setSpeaking(false);
       return;
@@ -182,8 +192,9 @@ function TrainingRoom() {
     setAudioError('');
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.94;
-    utterance.pitch = 1.03;
+    utterance.lang = 'en-US';
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
     utterance.onstart = () => setSpeaking(true);
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = (event) => {
@@ -193,6 +204,70 @@ function TrainingRoom() {
       }
     };
     window.speechSynthesis.speak(utterance);
+  }
+
+  function startQuestionRecognition() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setAudioError('Speech-to-text is not supported in this browser. Try Microsoft Edge or type your question instead.');
+      return;
+    }
+    setAudioError('');
+    const recognition = new Recognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      if (recognitionRef.current !== recognition) return;
+      const transcript = Array.from(event.results)
+        .filter((result) => result.isFinal)
+        .map((result) => result[0].transcript)
+        .join(' ')
+        .trim();
+      recognitionRef.current = null;
+      setListening(false);
+      if (!transcript) {
+        setAudioError('No speech was transcribed. Please try again or type your question.');
+        return;
+      }
+      setQuestion(transcript);
+      askPatient(transcript);
+    };
+    recognition.onerror = (event) => {
+      if (recognitionRef.current !== recognition) return;
+      if (event.error !== 'aborted') {
+        const errorMessages = {
+          'not-allowed': 'Microphone access was blocked. Allow microphone access in Edge settings, or type your question.',
+          network: 'Edge speech recognition could not reach its online speech service. Check your internet connection or type your question.',
+          'no-speech': 'No speech was detected. Try speaking after the microphone starts listening.',
+        };
+        setAudioError(errorMessages[event.error] || `Speech-to-text failed (${event.error}). Please try again or type your question.`);
+      }
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+        setListening(false);
+      }
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    try {
+      recognition.start();
+    } catch (error) {
+      recognitionRef.current = null;
+      setListening(false);
+      setAudioError(`Could not start speech-to-text: ${error.message}`);
+    }
+  }
+
+  function stopQuestionRecognition() {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setListening(false);
   }
 
   useEffect(() => {
@@ -210,22 +285,27 @@ function TrainingRoom() {
     const reply = getReply(caseFile, cleanQuestion, difficulty);
     setMessages((current) => [...current, { role: 'doctor', content: cleanQuestion, topic: reply.topic }, { role: 'patient', content: reply.text }]);
     setQuestion('');
+    speak(reply.text, false);
   }
 
   async function orderLabTest() {
-    if (!selectedTest || labLoading || labOrders.some((order) => order.test_id === selectedTest)) return;
-    setLabLoading(true);
+    if (!testName.trim() || labLoading) return;
     setLabError('');
+    if (labOrders.some((order) => normalizeOrderName(order.test_name) === normalizeOrderName(testName.trim()))) {
+      setLabError('That test has already been ordered.');
+      return;
+    }
+    setLabLoading(true);
     try {
       const response = await fetch(`${apiBase}/labs/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, testId: selectedTest }),
+        body: JSON.stringify({ caseId, testName: testName.trim() }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Lab simulation failed (HTTP ${response.status}).`);
       setLabOrders((current) => [...current, result]);
-      setSelectedTest('');
+      setTestName('');
     } catch (error) {
       setLabError(error.message || 'Could not reach the lab simulation service.');
     } finally {
@@ -235,20 +315,24 @@ function TrainingRoom() {
 
   async function orderMedication(event) {
     event.preventDefault();
-    if (!selectedMedication || !medicationReason.trim() || medicationLoading) return;
-    setMedicationLoading(true);
+    if (!medicationName.trim() || !medicationReason.trim() || medicationLoading) return;
     setMedicationError('');
+    if (medicationOrders.some((order) => normalizeOrderName(order.name) === normalizeOrderName(medicationName.trim()))) {
+      setMedicationError('That medicine has already been ordered.');
+      return;
+    }
+    setMedicationLoading(true);
     try {
       const response = await fetch(`${apiBase}/medications/order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, medicationId: selectedMedication, reason: medicationReason }),
+        body: JSON.stringify({ caseId, medicationName: medicationName.trim(), reason: medicationReason }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Medicine order failed (HTTP ${response.status}).`);
       setMedicationOrders((current) => [...current, result]);
       setMedicationReason('');
-      setSelectedMedication('');
+      setMedicationName('');
     } catch (error) {
       setMedicationError(error.message || 'Could not place the simulated medicine order.');
     } finally {
@@ -265,7 +349,7 @@ function TrainingRoom() {
       const response = await fetch(`${apiBase}/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, difficulty, impression, clinicalPlan, medicationOrders: medicationOrders.map(({ id, reason }) => ({ id, reason })), labOrders: labOrders.map((order) => order.test_id), messages }),
+        body: JSON.stringify({ caseId, difficulty, impression, clinicalPlan, medicationOrders: medicationOrders.map(({ name, reason }) => ({ name, reason })), labOrders: labOrders.map((order) => order.test_name), messages }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Assessment failed (HTTP ${response.status}).`);
@@ -284,9 +368,9 @@ function TrainingRoom() {
     setImpression('');
     setClinicalPlan('');
     setLabOrders([]);
-    setSelectedTest('');
+    setTestName('');
     setMedicationOrders([]);
-    setSelectedMedication('');
+    setMedicationName('');
     setMedicationReason('');
     setDebrief(null);
     setLabError('');
@@ -339,6 +423,20 @@ function TrainingRoom() {
                 <div><span>TEST CHOICE & RESULT INTERPRETATION <EvidenceLinks ids={debrief.investigation_evidence_ids} references={debrief.references} /></span><p>{debrief.investigation_assessment}</p></div>
                 <div><span>NEXT STEP & MEDICINE PLAN <EvidenceLinks ids={debrief.plan_evidence_ids} references={debrief.references} /></span><p>{debrief.plan_assessment}</p></div>
               </div>
+              <section className="answer-key">
+                <h3>Suggested answers to compare</h3>
+                <div>
+                  <strong>Investigations</strong>
+                  {debrief.answer_key.investigations.map((item) => <p key={item.name}>{item.name}: {item.reason} <EvidenceLinks ids={item.evidence_ids} references={debrief.references} /></p>)}
+                </div>
+                <div>
+                  <strong>Medicine considerations</strong>
+                  {debrief.answer_key.medicines.length
+                    ? debrief.answer_key.medicines.map((item) => <p key={item.name}>{item.name}: {item.reason} <EvidenceLinks ids={item.evidence_ids} references={debrief.references} /></p>)
+                    : <p>No medicine option is supported for this case by the retrieved references.</p>}
+                </div>
+                <small>Educational examples, not prescribing advice. Check the linked guidance and local protocols.</small>
+              </section>
               <div className="debrief-metrics">
                 <div><span>WHAT YOU DID WELL</span>{debrief.strengths.map((item, index) => <p className="feedback-point" key={`strength-${index}`}>{item.text} <EvidenceLinks ids={item.evidence_ids} references={debrief.references} /></p>)}</div>
                 <div><span>ROOM TO GROW</span>{debrief.growth_areas.map((item, index) => <p className="feedback-point" key={`growth-${index}`}>{item.text} <EvidenceLinks ids={item.evidence_ids} references={debrief.references} /></p>)}</div>
@@ -406,44 +504,40 @@ function TrainingRoom() {
                 <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to know?" aria-label="Question for the patient" disabled={assessmentLoading || labLoading} />
                 <button type="submit" disabled={!question.trim() || assessmentLoading || labLoading} aria-label="Send question"><Icon name="send" size={16} /></button>
               </form>
+              <button className={`microphone-button patient-microphone ${listening ? 'is-listening' : ''}`} type="button" onClick={listening ? stopQuestionRecognition : startQuestionRecognition} disabled={assessmentLoading || labLoading || medicationLoading} aria-pressed={listening}>
+                <Icon name="microphone" size={14} />{listening ? 'Stop listening' : 'Speak question'}
+              </button>
+              {listening && <span className="listening-status patient-listening" role="status">Listening… your transcribed question will be sent when you finish speaking.</span>}
               <span className="suggestion-label">A FEW PLACES TO START</span>
               <div className="suggestion-list">{caseFile.suggested.map((suggestion) => <button key={suggestion} disabled={assessmentLoading || labLoading} onClick={() => askPatient(suggestion)}><Icon name="plus" size={14} /><span>{suggestion}</span></button>)}</div>
             </div>
             <div className="lab-section">
               <div className="subhead-row"><h3>Order a simulated test</h3><span>{labOrders.length} result{labOrders.length === 1 ? '' : 's'}</span></div>
-              <p className="assessment-hint">Choose a text-report investigation that fits your differential. Results are AI-generated fictional teaching data.</p>
-              <div className="lab-order-controls">
-                <select aria-label="Choose a lab test" value={selectedTest} disabled={assessmentLoading || labLoading} onChange={(event) => setSelectedTest(event.target.value)}>
-                  <option value="">Choose a test…</option>
-                  {caseFile.tests.filter((test) => !labOrders.some((order) => order.test_id === test.id)).map((test) => <option key={test.id} value={test.id}>{test.name}</option>)}
-                </select>
-                <button type="button" disabled={!selectedTest || assessmentLoading || labLoading} onClick={orderLabTest}>{labLoading ? 'Simulating…' : 'Order'}</button>
-              </div>
+              <form className="lab-order-controls" onSubmit={(event) => { event.preventDefault(); orderLabTest(); }}>
+                <input aria-label="Investigation to order" value={testName} onChange={(event) => setTestName(event.target.value)} placeholder="Investigation name" maxLength={120} disabled={assessmentLoading || labLoading} />
+                <button type="submit" disabled={!testName.trim() || assessmentLoading || labLoading}>{labLoading ? 'Ordering…' : 'Order'}</button>
+              </form>
               {labError && <p className="lab-error" role="alert">{labError}</p>}
               {labOrders.map((order) => <article className="lab-result" key={order.test_id}>
                 <div className="lab-result-head"><strong>{order.test_name}</strong><span>SIMULATED</span></div>
-                <div className="lab-findings">{order.findings.map((finding) => <div key={finding.name}><span>{finding.name}</span><strong>{finding.value}</strong></div>)}</div>
+                {order.findings.length > 0 && <div className="lab-findings">{order.findings.map((finding) => <div key={finding.name}><span>{finding.name}</span><strong>{finding.value}</strong></div>)}</div>}
                 <p>{order.summary}</p><small>{order.note}</small>
               </article>)}
             </div>
             <div className="medication-section">
               <div className="subhead-row"><h3>Simulated medicine orders</h3><span>{medicationOrders.length} placed</span></div>
-              <p className="assessment-hint">Choose an educational option if appropriate. No dose is entered, and no real prescription is created.</p>
               <form className="medicine-order-form" onSubmit={orderMedication}>
-                <select aria-label="Choose a simulated medicine" value={selectedMedication} onChange={(event) => setSelectedMedication(event.target.value)} disabled={assessmentLoading || medicationLoading || labLoading}>
-                  <option value="">No medicine order / choose an option…</option>
-                  {caseFile.medications.filter((item) => !medicationOrders.some((order) => order.id === item.id)).map((item) => <option key={item.id} value={item.id}>{item.name} — {item.indication}</option>)}
-                </select>
-                <textarea aria-label="Medicine order rationale" value={medicationReason} onChange={(event) => setMedicationReason(event.target.value)} placeholder="Why might this be appropriate in the fictional case? Consider safety." rows="2" disabled={assessmentLoading || medicationLoading || labLoading} />
-                <button type="submit" disabled={!selectedMedication || !medicationReason.trim() || assessmentLoading || medicationLoading || labLoading}>{medicationLoading ? 'Placing…' : 'Place simulated order'}</button>
+                <input aria-label="Medicine to order" value={medicationName} onChange={(event) => setMedicationName(event.target.value)} placeholder="Medicine name" maxLength={120} disabled={assessmentLoading || medicationLoading || labLoading} />
+                <textarea aria-label="Medicine order rationale" value={medicationReason} onChange={(event) => setMedicationReason(event.target.value)} placeholder="Order rationale" rows="2" disabled={assessmentLoading || medicationLoading || labLoading} />
+                <button type="submit" disabled={!medicationName.trim() || !medicationReason.trim() || assessmentLoading || medicationLoading || labLoading}>{medicationLoading ? 'Placing…' : 'Place simulated order'}</button>
               </form>
               {medicationError && <p className="lab-error" role="alert">{medicationError}</p>}
               {medicationOrders.map((order) => <article className="medication-order" key={order.id}><div><strong>{order.name}</strong><span>SIMULATED · NO DOSE</span></div><p>{order.reason}</p><small>{order.note}</small></article>)}
             </div>
             <div className="assessment-section"><div className="subhead-row"><h3>Working impression</h3><span>Private until debrief</span></div><p className="assessment-hint">What pattern are you considering? You can change your mind—that's the point.</p>
-              <textarea value={impression} onChange={(event) => setImpression(event.target.value)} placeholder="What condition or pattern are you considering?" aria-label="Your provisional clinical impression" rows="2" disabled={assessmentLoading || labLoading} />
+              <textarea value={impression} onChange={(event) => setImpression(event.target.value)} placeholder="What condition or pattern are you considering?" aria-label="Your provisional clinical impression" rows="2" disabled={assessmentLoading || labLoading || medicationLoading} />
               <label className="plan-label" htmlFor="clinical-plan">TEST INTERPRETATION & NEXT STEP</label>
-              <textarea id="clinical-plan" value={clinicalPlan} onChange={(event) => setClinicalPlan(event.target.value)} placeholder="Interpret the history and results. What would you do next in this fictional case?" aria-label="Your test interpretation and next clinical decision" rows="3" disabled={assessmentLoading || labLoading} />
+              <textarea id="clinical-plan" value={clinicalPlan} onChange={(event) => setClinicalPlan(event.target.value)} placeholder="Interpret the history and results. What would you do next in this fictional case?" aria-label="Your test interpretation and next clinical decision" rows="3" disabled={assessmentLoading || labLoading || medicationLoading} />
             </div>
             <button className="debrief-button" onClick={submitDebrief} disabled={assessmentLoading || labLoading || medicationLoading || askedTopics.size < 2 || !labOrders.length || !impression.trim() || !clinicalPlan.trim()}><span>{assessmentLoading ? 'Retrieving references & assessing your reasoning…' : 'Finish & review my reasoning'}</span><Icon name={assessmentLoading ? 'clock' : 'arrow'} size={16} /></button>
             <p className={`debrief-prerequisite ${assessmentError ? 'assessment-error' : ''}`} role={assessmentError ? 'alert' : 'status'}>{assessmentError || (askedTopics.size < 2 ? 'Explore at least 2 areas before your debrief.' : !labOrders.length ? 'Order and review at least one simulated test.' : !impression.trim() ? 'Add a working impression when you feel ready.' : !clinicalPlan.trim() ? 'Add your interpretation and next-step plan.' : 'Your reference pattern stays hidden until assessment completes.')}</p>
