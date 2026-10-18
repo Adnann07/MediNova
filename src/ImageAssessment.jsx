@@ -5,6 +5,8 @@ const apiBase = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8787/api';
 export default function ImageAssessment() {
   const [query, setQuery] = useState('chest x-ray case report');
   const [cases, setCases] = useState([]);
+  const [searchSource, setSearchSource] = useState(null);
+  const [imageFailed, setImageFailed] = useState(false);
   const [caseIndex, setCaseIndex] = useState(0);
   const [interpretation, setInterpretation] = useState('');
   const [assessment, setAssessment] = useState(null);
@@ -17,6 +19,8 @@ export default function ImageAssessment() {
     setLoading(true);
     setError('');
     setCases([]);
+    setSearchSource(null);
+    setImageFailed(false);
     setAssessment(null);
     setInterpretation('');
     try {
@@ -24,6 +28,7 @@ export default function ImageAssessment() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Open-i search failed (HTTP ${response.status}).`);
       setCases(result.cases);
+      setSearchSource(result.source || { mode: 'live', warning: '' });
       setCaseIndex(0);
     } catch (searchError) {
       setError(searchError.message || 'Could not load Open-i images.');
@@ -38,6 +43,7 @@ export default function ImageAssessment() {
 
   function selectImage(index) {
     setCaseIndex(index);
+    setImageFailed(false);
     setAssessment(null);
     setInterpretation('');
     setError('');
@@ -98,21 +104,24 @@ export default function ImageAssessment() {
         </section>
 
         {error && <div className="image-assessment-error" role="alert">{error}</div>}
+        {searchSource?.warning && <div className="openi-fallback-warning" role="status">{searchSource.warning}</div>}
         {loading && <div className="image-assessment-empty">Loading medical images from Open-i…</div>}
         {!loading && currentCase && (
           <div className="image-assessment-grid">
             <section className="discussion-panel image-viewer-panel">
               <div className="image-panel-heading">
-                <div><span>OPEN-I MEDICAL IMAGE</span><strong>Image {caseIndex + 1} of {cases.length}</strong></div>
+                <div><span>{searchSource?.mode === 'live' ? 'LIVE OPEN-I MEDICAL IMAGE' : 'CACHED OPEN-I MEDICAL IMAGE'}</span><strong>Image {caseIndex + 1} of {cases.length}</strong></div>
                 <div className="image-pager">
                   <button type="button" onClick={() => selectImage((caseIndex + cases.length - 1) % cases.length)} disabled={cases.length < 2} aria-label="Previous image">Previous</button>
                   <button type="button" onClick={() => selectImage((caseIndex + 1) % cases.length)} disabled={cases.length < 2} aria-label="Next image">Next</button>
                 </div>
               </div>
               <div className="openi-image-frame">
-                <img src={currentCase.imageUrl} alt="Medical image from Open-i; interpret the visible findings before revealing the published caption." />
+                {imageFailed
+                  ? <div className="openi-image-error" role="alert">This published image is temporarily unavailable. Try another image or search again later.</div>
+                  : <img src={currentCase.imageUrl} onError={() => setImageFailed(true)} alt="Medical image from the linked publication; interpret the visible findings before revealing its caption." />}
               </div>
-              <p className="image-provider-note">Image served by Open-i, U.S. National Library of Medicine. The published caption and article context are hidden until you submit.</p>
+              <p className="image-provider-note">Image served by {currentCase.imageProvider || 'Open-i'}, U.S. National Library of Medicine. The published caption and article context are hidden until you submit.</p>
             </section>
 
             <section className="discussion-panel image-interpretation-panel">
@@ -122,7 +131,7 @@ export default function ImageAssessment() {
               <form onSubmit={submitInterpretation}>
                 <label className="image-interpretation-label" htmlFor="image-interpretation">Describe the visible features and your cautious interpretation.</label>
                 <textarea id="image-interpretation" value={interpretation} onChange={(event) => setInterpretation(event.target.value)} maxLength={3000} rows={8} placeholder="Write what you observe. Note uncertainty and avoid assuming findings that are not visible." />
-                <div className="image-submit-row"><small>{interpretation.length}/3000</small><button className="primary-button" type="submit" disabled={submitting || !interpretation.trim()}>{submitting ? 'Reviewing…' : 'Submit interpretation'}</button></div>
+                <div className="image-submit-row"><small>{interpretation.length}/3000</small><button className="primary-button" type="submit" disabled={submitting || imageFailed || !interpretation.trim()}>{submitting ? 'Reviewing…' : 'Submit interpretation'}</button></div>
               </form>
             </section>
           </div>

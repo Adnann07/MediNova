@@ -21,6 +21,7 @@ const evaluationCases = new Map();
 const discussionSessions = new Map();
 const imageAssessmentCases = new Map();
 const reportAssessmentCases = new Map();
+const openiSearchCache = new Map();
 let generationInProgress = null;
 loadLocalEnvironment();
 
@@ -982,43 +983,81 @@ Student interpretation: ${JSON.stringify(interpretation)}`;
         sendJson(response, 400, { error: 'Enter an Open-i search phrase of up to 120 characters.' });
         return;
       }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), sourceTimeoutMs);
-      let openiResponse;
-      try {
+      let results;
+      let source = { mode: 'live', warning: '' };
+      let lastOpeniError;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), sourceTimeoutMs);
+        try {
         const searchUrl = new URL('https://openi.nlm.nih.gov/api/search');
         searchUrl.searchParams.set('query', query);
-        openiResponse = await fetch(searchUrl, {
+        const openiResponse = await fetch(searchUrl, {
           signal: controller.signal,
           headers: { Accept: 'application/json', 'User-Agent': 'MediNovaEducationalSimulator/1.0' },
         });
-      } catch (error) {
-        if (controller.signal.aborted) throw Object.assign(new Error('Open-i image search timed out. Please try again.'), { status: 504 });
-        throw Object.assign(new Error(`Could not reach the Open-i image service: ${error.message}`), { status: 502 });
-      } finally {
-        clearTimeout(timer);
+        if (!openiResponse.ok) {
+          throw new Error(`Open-i returned HTTP ${openiResponse.status}.`);
+        }
+        const contentType = openiResponse.headers.get('content-type') || '';
+        if (!/application\/(?:[\w.+-]*\+)?json\b/i.test(contentType)) {
+          throw new Error(`Open-i returned ${contentType || 'an unknown content type'} instead of JSON.`);
+        }
+        let payload;
+        try {
+          payload = await openiResponse.json();
+        } catch {
+          throw new Error('Open-i returned an unreadable JSON search response.');
+        }
+        results = normalizeOpeniSearchResponse(payload).slice(0, 20);
+        if (!results.length) {
+          sendJson(response, 404, { error: 'Open-i returned no image records with a usable image and caption or clinical information. Try another search phrase.' });
+          return;
+        }
+        openiSearchCache.set(query.toLowerCase(), results);
+        if (openiSearchCache.size > 20) openiSearchCache.delete(openiSearchCache.keys().next().value);
+        lastOpeniError = null;
+        break;
+        } catch (error) {
+          lastOpeniError = error;
+          if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 350));
+        } finally {
+          clearTimeout(timer);
+        }
       }
-      if (!openiResponse.ok) {
-        throw Object.assign(new Error(`Open-i image search returned HTTP ${openiResponse.status}.`), { status: 502 });
+      if (!results) {
+        const cachedResults = openiSearchCache.get(query.toLowerCase());
+        if (cachedResults) {
+          results = cachedResults;
+          source = {
+            mode: 'cached',
+            warning: `Open-i is temporarily unavailable (${lastOpeniError.message}). Showing results previously retrieved for this search; this is not a live search.`,
+          };
+        } else if (/\b(chest|x-?ray|radiograph)\b/i.test(query)) {
+          const fallbackPath = fileURLToPath(new URL('./openi-cached-examples.json', import.meta.url));
+          const fallbackPayload = JSON.parse(readFileSync(fallbackPath, 'utf8'));
+          results = normalizeOpeniSearchResponse(fallbackPayload).slice(0, 20);
+          source = {
+            mode: 'local-fallback',
+            warning: `Open-i is temporarily unavailable (${lastOpeniError.message}). Showing two previously verified Open-i chest X-ray records instead.`,
+          };
+        } else {
+          throw Object.assign(new Error(`Open-i is temporarily unavailable (${lastOpeniError.message}), and there are no cached examples for this search. Retry in a moment or search chest X-ray examples.`), { status: 503 });
+        }
+        console.warn(`Open-i image search fallback used for "${query}": ${lastOpeniError.message}`);
       }
-      let payload;
-      try {
-        payload = await openiResponse.json();
-      } catch {
-        throw Object.assign(new Error('Open-i returned invalid JSON for image search.'), { status: 502 });
-      }
-      const results = normalizeOpeniSearchResponse(payload).slice(0, 20);
       if (!results.length) {
         sendJson(response, 404, { error: 'Open-i returned no image records with a usable image and caption or clinical information. Try another search phrase.' });
         return;
       }
       imageAssessmentCases.clear();
-      const cases = results.map(({ referenceId, imageUrl, reference }) => {
+      const cases = results.map(({ referenceId, imageUrl, imageProvider, reference }) => {
         const id = randomUUID();
-        imageAssessmentCases.set(id, { referenceId, imageUrl, reference });
-        return { id, imageUrl };
+        const imageSource = imageProvider || 'Open-i';
+        imageAssessmentCases.set(id, { referenceId, imageUrl, imageProvider: imageSource, reference, searchSource: source });
+        return { id, imageUrl, imageProvider: imageSource };
       });
-      sendJson(response, 200, { cases, query, provider: 'Open-i, U.S. National Library of Medicine' });
+      sendJson(response, 200, { cases, query, provider: 'Open-i, U.S. National Library of Medicine', source });
     } catch (error) {
       const status = error.status || 502;
       if (status >= 500) console.error('Open-i image search failed:', error);
@@ -1087,6 +1126,8 @@ Open-i publication information as JSON data: ${referenceText}`;
           provider: 'Open-i, U.S. National Library of Medicine',
           url: 'https://openi.nlm.nih.gov/services',
           articleUrl: imageCase.reference.articleUrl,
+          imageProvider: imageCase.imageProvider,
+          search: imageCase.searchSource,
         },
       });
     } catch (error) {

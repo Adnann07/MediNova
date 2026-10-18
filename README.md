@@ -43,7 +43,6 @@ The app is designed for practice, not for recording patient encounters. There is
 | Patient voice | Web Speech API | Browser-native text-to-speech for simulated patient speech; speech recognition is used where supported |
 | Styling | CSS | Responsive, white-and-red medical-learning interface |
 | AI feedback and generation | Ollama Cloud chat API (configured Gemma model) | Case generation, material-based generation, and supported assessment flows |
-| Optional AI feedback | Anthropic Messages API (Claude) | Laboratory report assessment when `ANTHROPIC_API_KEY` is configured |
 | Clinical image search | Open-i API | Published medical-image metadata and image URLs |
 | Laboratory example | HL7 FHIR R5 | Public General Health Profile `DiagnosticReport` and linked CBC `Observation` resources |
 
@@ -107,7 +106,7 @@ The Node server uses in-memory `Map` collections for active sessions. Restarting
 - Lets the learner write and submit an interpretation.
 - Reveals a DiagnosticReport conclusion or FHIR Observation interpretation code only when the sample actually contains one.
 - The selected HL7 example has no DiagnosticReport conclusion or linked CBC interpretation codes, so the feedback is labelled **AI-generated educational feedback — no verified report interpretation supplied**.
-- Calls Claude if configured. Otherwise it uses the existing Gemma/Ollama integration and labels the provider fallback in the returned feedback.
+- Uses the configured Gemma model through Ollama to provide educational feedback.
 
 ## External data and AI providers
 
@@ -119,7 +118,7 @@ The image assessment backend calls the documented Open-i search service:
 GET https://openi.nlm.nih.gov/api/search?query=<search terms>
 ```
 
-The implementation uses fields observed in live Open-i responses, including `list`, `uid`, `imgLarge`, `image.caption`, `image.mention`, `abstract`, `pmc_url`, `pubMed_url`, `pmid`, and `pmcid`. Image links are restricted to HTTPS URLs hosted at `openi.nlm.nih.gov` under `/imgs/`. Open-i is a search and publication-metadata source, not a structured reference-diagnosis API.
+The implementation uses fields observed in live Open-i responses, including `list`, `uid`, `imgLarge`, `image.caption`, `image.mention`, `abstract`, `pmc_url`, `pubMed_url`, `pmid`, and `pmcid`. Live image links are restricted to HTTPS URLs hosted at `openi.nlm.nih.gov` under `/imgs/`. For cached fallback records, the original figure assets are served from the corresponding PubMed Central article URLs (`cdn.ncbi.nlm.nih.gov/pmc/blobs/`). Open-i is a search and publication-metadata source, not a structured reference-diagnosis API. If Open-i returns a server error, HTML error page, or times out, the backend retries once, then can display clearly identified previously verified chest X-ray records from `backend/openi-cached-examples.json`. The interface identifies those as cached/local fallback records, not as live results. A stale fallback is not used for unrelated search terms.
 
 ### HL7 FHIR
 
@@ -137,10 +136,6 @@ If HL7 cannot be reached or its response is incompatible, the backend loads [`ba
 
 Gemma is called by the backend, never directly by the browser. The current implementation uses the Ollama Cloud chat endpoint and defaults to the model name `gemma4:31b`; the model can be configured in `backend/.env`.
 
-### Claude
-
-The laboratory-report assessment calls the Anthropic Messages API when `ANTHROPIC_API_KEY` is present. It uses the configured `ANTHROPIC_MODEL`, defaulting to `claude-sonnet-4-5-20250929`. If the Claude key is not configured, that feature uses Gemma as a clearly identified fallback. Other existing Gemma-powered application features continue to use the Ollama integration.
-
 No AI provider should be treated as a source of verified clinical truth. AI-generated feedback may be incomplete or incorrect; compare it with the linked primary sources and appropriate supervision.
 
 ## Local development
@@ -149,7 +144,7 @@ No AI provider should be treated as a source of verified clinical truth. AI-gene
 
 - Node.js with support for ES modules and the built-in `fetch` API.
 - npm.
-- An Ollama Cloud API key for Gemma-powered features. A Claude API key is optional and only needed to use Claude for report-assessment feedback.
+- An Ollama Cloud API key for Gemma-powered features.
 
 ### Install dependencies
 
@@ -208,8 +203,6 @@ The standard `npm run dev:api` script uses the configured `API_PORT` in `backend
 | `OLLAMA_API_KEY_BACKUP` | No | Optional Ollama key fallback |
 | `OLLAMA_API_KEY_BACKUP_2` | No | Optional second Ollama key fallback |
 | `OLLAMA_MODEL` | No | Ollama model name; defaults to `gemma4:31b` |
-| `ANTHROPIC_API_KEY` | Optional | Enables Claude specifically for laboratory report assessment |
-| `ANTHROPIC_MODEL` | No | Claude model name; defaults to `claude-sonnet-4-5-20250929` |
 
 For local frontend development:
 
@@ -219,7 +212,7 @@ For local frontend development:
 
 Vite-prefixed variables are included in browser code at build time. **Never put secret credentials in a `VITE_*` variable.**
 
-The health endpoint reports whether Ollama and Claude keys are configured; it does not expose their values.
+The health endpoint reports whether the Ollama key is configured; it does not expose its value.
 
 ## API overview
 

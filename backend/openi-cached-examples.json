@@ -1,0 +1,29 @@
+{
+  "count": 2,
+  "list": [
+    {
+      "uid": "PMC7472981",
+      "title": "CVDNet: A novel deep learning architecture for detection of coronavirus (Covid-19) from chest x-ray images",
+      "articleType": "ra",
+      "pmcid": "7472981",
+      "pmid": "32921934",
+      "pmc_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7472981",
+      "imgLarge": "https://cdn.ncbi.nlm.nih.gov/pmc/blobs/77e5/7472981/5278b88f435e/gr3_lrg.jpg",
+      "image": {
+        "caption": "Example of chest X-ray images: (a) COVID-19 chest X-ray image, (b) normal chest X-ray image, (c) viral pneumonia chest X-ray image."
+      }
+    },
+    {
+      "uid": "PMC10794872",
+      "title": "A case series of the twiddler syndrome",
+      "articleType": "cr",
+      "pmcid": "10794872",
+      "pmid": "38239312",
+      "pmc_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10794872",
+      "imgLarge": "https://cdn.ncbi.nlm.nih.gov/pmc/blobs/0306/10794872/596c97a3cd94/ytae004f1.jpg",
+      "image": {
+        "caption": "Case report 1. (A) Post-implant chest X-ray. (B) Chest X-ray—6 months later."
+      }
+    }
+  ]
+}

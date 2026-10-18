@@ -20,7 +20,11 @@ function openiImageUrl(path) {
   if (typeof path !== 'string' || !path.trim()) return null;
   try {
     const url = new URL(path, openiOrigin);
-    if (url.protocol !== 'https:' || url.hostname !== 'openi.nlm.nih.gov' || !url.pathname.startsWith('/imgs/')) return null;
+    const isOpeniImage = url.hostname === 'openi.nlm.nih.gov' && url.pathname.startsWith('/imgs/');
+    const isPmcImage = url.hostname === 'cdn.ncbi.nlm.nih.gov'
+      && url.pathname.startsWith('/pmc/blobs/')
+      && /\.(?:jpe?g|png|gif)$/i.test(url.pathname);
+    if (url.protocol !== 'https:' || (!isOpeniImage && !isPmcImage)) return null;
     return url.href;
   } catch {
     return null;
@@ -65,6 +69,7 @@ export function normalizeOpeniSearchResponse(payload) {
     cases.push({
       referenceId: `${uid}:${new URL(imageUrl).pathname.split('/').pop()}`,
       imageUrl,
+      imageProvider: new URL(imageUrl).hostname === 'cdn.ncbi.nlm.nih.gov' ? 'PubMed Central' : 'Open-i',
       reference,
     });
   }
