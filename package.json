@@ -1,0 +1,20 @@
+{
+  "name": "medinova",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "dev:api": "node backend/server.mjs",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "pdfjs-dist": "^4.10.38",
+    "react": "latest",
+    "react-dom": "latest",
+    "tesseract.js": "^6.0.1",
+    "vite": "latest"
+  }
+}
