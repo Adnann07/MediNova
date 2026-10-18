@@ -23,11 +23,10 @@ function Icon({ name, size = 18 }) {
 }
 
 function PatientAvatar({ accent, hairStyle, speaking }) {
-  const hair = {
-    short: 'M63 105c-5-39 5-67 35-76 28-9 57 5 65 34 4 13 2 28-1 39l-10-18c-23 0-44-12-56-28-5 15-17 27-33 33z',
-    long: 'M63 105c-5-39 5-67 35-76 28-9 57 5 65 34 4 13 2 28-1 39l-10-18c-23 0-44-12-56-28-5 15-17 27-33 33zm2 1c-7 27-7 54 2 73l14-7-4-54zm91 0c7 27 7 54-2 73l-14-7 4-54z',
-    curly: 'M63 108c-12-19-7-53 9-67 7-18 26-20 38-18 18-11 44-2 54 17 17 14 12 48 3 68l-14-17c-22 1-43-9-56-26-7 14-18 22-34 27z',
-  };
+  const longHair = hairStyle === 'long';
+  const curlyHair = hairStyle === 'curly';
+  const coveredHair = hairStyle === 'covered';
+  const shortHair = !longHair && !curlyHair && !coveredHair;
   return (
     <div className={`portrait portrait-${accent} portrait-hair-${hairStyle} ${speaking ? 'portrait-speaking' : ''}`} aria-label="Illustrated patient avatar">
       <span className="portrait-glow" />
@@ -35,15 +34,20 @@ function PatientAvatar({ accent, hairStyle, speaking }) {
         <ellipse cx="110" cy="224" rx="69" ry="9" fill="#dfc8c3" opacity=".45" />
         <path d="M40 220c3-40 27-61 70-61s67 21 70 61v12H40z" fill="var(--shirt)" />
         <path d="M85 150h50v34c-7 12-17 18-25 18s-18-6-25-18z" fill="var(--skin)" />
+        {longHair && <path d="M64 99c-8-40 4-70 29-80 28-12 63 0 70 33 5 21 2 50-2 80l-9 42-19-5 5-69-56-2 4 71-19 5-9-41c-5-12-6-24-4-34z" fill="var(--hair)" />}
+        {curlyHair && <path d="M61 112c-12-19-8-54 9-70 2-18 20-27 36-23 19-14 49-4 56 17 19 12 16 53 4 77l-11-11c-7 23-18 40-26 46l-7-31H91l-8 31c-10-8-18-21-22-36z" fill="var(--hair)" />}
+        {coveredHair && <path d="M54 132c-6-61 13-103 56-108 43 5 62 47 56 108l-14 57H68z" fill="var(--shirt)" />}
+        {shortHair && <path d="M62 105c-6-39 5-68 34-78 28-10 58 3 65 33 4 15 2 31-2 43l-14-10c-22 1-43-10-56-28-5 15-14 27-27 34z" fill="var(--hair)" />}
         <path d="M66 90c0-36 17-57 45-57s45 21 45 57v31c0 35-20 57-45 57s-45-22-45-57z" fill="var(--skin)" />
-        {hairStyle === 'covered'
-          ? <><path d="M58 121c-5-48 17-88 53-88s58 40 53 88l-17 40h-72z" fill="var(--hair)" /><path d="M61 102c8-42 24-60 50-60s42 18 50 60c-17-12-31-28-38-45-15 20-35 36-62 45z" fill="var(--shirt)" /></>
-          : <path className="avatar-hair" d={hair[hairStyle] || hair.short} fill="var(--hair)" />}
-        <path d="M65 99c-9-4-14 3-12 14s8 18 17 18M155 99c9-4 14 3 12 14s-8 18-17 18" fill="var(--skin)" />
-        <path d="M79 113c4-3 9-3 13 0M128 113c4-3 9-3 13 0" fill="none" stroke="#57413c" strokeWidth="3" strokeLinecap="round" />
-        <ellipse cx="86" cy="124" rx="3" ry="4" fill="#453633" /><ellipse cx="134" cy="124" rx="3" ry="4" fill="#453633" />
-        <path d="M109 125c-2 8-4 13-2 15 2 2 5 2 8 1" fill="none" stroke="#b97968" strokeWidth="2" strokeLinecap="round" />
-        <path className="avatar-mouth" d="M99 151c6 5 17 5 23 0" fill="none" stroke="#995b54" strokeWidth="2.5" strokeLinecap="round" />
+        {coveredHair && <path d="M61 105c8-41 24-61 49-61s41 20 49 61c-18-8-36-26-49-46-13 20-31 38-49 46z" fill="var(--shirt)" />}
+        {shortHair && <path d="M62 101c-5-24-1-50 14-65 9-9 21-14 34-14 17 0 32 8 41 23 9 15 10 36 5 55l-11-14c-14-5-25-15-33-29-10 15-25 25-44 31l-6 13z" fill="var(--hair)" />}
+        {!coveredHair && longHair && <path d="M65 83c5-35 23-54 45-54s40 19 45 54c-16-6-29-19-38-35-12 18-30 31-52 35z" fill="var(--hair)" />}
+        {!coveredHair && curlyHair && <path d="M61 101c-8-14-5-38 5-50 2-19 17-28 30-24 11-12 33-13 45-1 18 4 25 28 19 52l-12 19c-6-15-10-26-13-41-9 12-23 19-39 20-10 12-21 20-35 25z" fill="var(--hair)" />}
+        <path d="M83 112c5-4 11-4 16 0M121 112c5-4 11-4 16 0" fill="none" stroke="#59413b" strokeWidth="3" strokeLinecap="round" />
+        <ellipse cx="91" cy="123" rx="3.8" ry="4.4" fill="#302724" /><ellipse cx="129" cy="123" rx="3.8" ry="4.4" fill="#302724" />
+        <path d="M110 124c-2 8-4 14-2 16 2 2 5 2 8 1" fill="none" stroke="#a86659" strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M97 143c8 7 18 7 26 0" fill="none" stroke="#fff3e9" strokeWidth="4" strokeLinecap="round" />
+        <path className="avatar-mouth" d="M99 146c6 4 15 4 21 0" fill="none" stroke="#873f3e" strokeWidth="3.5" strokeLinecap="round" />
         <path d="M78 174c8 15 19 23 32 23s24-8 32-23l20 11-21 38H79l-21-38z" fill="var(--shirt)" />
         <path d="m93 170 17 19 17-19" fill="none" stroke="#ffffff" strokeOpacity=".72" strokeWidth="3" />
       </svg>
@@ -190,6 +194,15 @@ function TrainingRoom() {
     };
     window.speechSynthesis.speak(utterance);
   }
+
+  useEffect(() => {
+    if (!caseFile?.opening) return undefined;
+    const timer = window.setTimeout(() => speak(caseFile.opening), 400);
+    return () => {
+      window.clearTimeout(timer);
+      window.speechSynthesis?.cancel();
+    };
+  }, [caseFile?.id, caseFile?.opening]);
 
   function askPatient(rawQuestion) {
     const cleanQuestion = rawQuestion.trim();
@@ -371,12 +384,12 @@ function TrainingRoom() {
             <div className="card-topline"><div className="card-title"><span className="live-pip" /> YOUR PATIENT IS HERE</div><span className="case-tag">{caseFile.category}</span></div>
             <div className="patient-profile">
               <PatientAvatar accent={caseFile.accent} hairStyle={caseFile.hairStyle} speaking={speaking} />
-              <div className="patient-details"><div className="patient-label">TODAY'S PATIENT</div><h2>{caseFile.patient}</h2><p>{caseFile.age} years <span>·</span> {caseFile.pronouns}</p><span className="patient-context"><span /> First visit <i /> History not yet taken</span></div>
+              <div className="patient-details"><div className="patient-label">TODAY'S PATIENT</div><h2>{caseFile.patient}</h2><p>{caseFile.age} years old</p><span className="patient-context"><span /> First visit <i /> History not yet taken</span></div>
             </div>
             <div className="opening-quote">
               <div className="quote-mark">“</div>
               <div><span className="quote-label">IN THEIR OWN WORDS</span><p>{caseFile.opening}</p></div>
-              <button className={`voice-button ${speaking ? 'voice-active' : ''}`} onClick={() => speak(caseFile.opening)} aria-label={speaking ? 'Stop patient voice' : 'Play patient voice'} title={speaking ? 'Stop voice' : 'Listen to patient'}><Icon name={speaking ? 'stop' : 'sound'} size={17} />{speaking ? 'Stop' : 'Listen'}</button>
+              <button className={`voice-button ${speaking ? 'voice-active' : ''}`} onClick={() => speak(caseFile.opening)} aria-label={speaking ? 'Stop patient voice' : 'Replay patient voice'} title={speaking ? 'Stop voice' : 'Replay patient statement'}><Icon name={speaking ? 'stop' : 'sound'} size={17} />{speaking ? 'Stop' : 'Replay'}</button>
             </div>
             {audioError && <p className="audio-note" role="status">{audioError}</p>}
             <div className="conversation-head"><div><span className="conversation-title">THE CONVERSATION</span><span className="conversation-subtitle">{messages.length ? `${messages.filter((message) => message.role === 'doctor').length} questions asked` : 'Your interview starts here'}</span></div><span className="privacy-chip"><Icon name="shield" size={13} /> SIMULATED</span></div>

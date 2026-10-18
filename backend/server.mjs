@@ -23,6 +23,7 @@ const allowedOrigins = new Set(['http://localhost:5173', 'http://localhost:5174'
 const maxBodyBytes = 32_000;
 const maxDiscussionBodyBytes = 2_500_000;
 const sourceTimeoutMs = 12_000;
+const researchTimeoutMs = 15_000;
 const modelTimeoutMs = 45_000;
 const caseGenerationTimeoutMs = 120_000;
 const discussionTimeoutMs = 120_000;
@@ -124,10 +125,10 @@ async function generatePracticeCases() {
   const timer = setTimeout(() => controller.abort(), caseGenerationTimeoutMs);
   const prompt = `Create exactly ONE original fictional adult clinical-interview practice case for a medical education simulator called "Making mistakes before it counts."
 Return only valid JSON with a top-level "cases" array containing exactly one case, using this shape:
-{"cases":[{"title":"...","category":"...","referencePattern":"...","clinicalContext":"...","learning":"...","patient":{"name":"...","age":34,"pronouns":"they/them"},"avatar":{"accent":"coral","hairStyle":"short"},"opening":"First-person opening symptom statement","topics":[{"id":"onset","label":"Onset and duration","keywords":["when","start"],"answer":"Natural first-person patient answer"}],"suggested":["Question 1?","Question 2?","Question 3?"],"tests":[{"name":"Full blood count","findings":[{"name":"White cell count","value":"Fictional text result"}],"summary":"Short cautious interpretation of the fictional report"}],"medications":[{"name":"Generic medicine name or class","indication":"Why it may be considered in this fictional scenario"}],"references":[{"title":"Public guidance title","url":"https://www.nice.org.uk/guidance/..."}]}]}
+{"cases":[{"title":"...","category":"...","referencePattern":"...","clinicalContext":"...","learning":"...","patient":{"name":"...","age":34},"avatar":{"accent":"coral","hairStyle":"short"},"opening":"First-person opening symptom statement","topics":[{"id":"onset","label":"Onset and duration","keywords":["when","start"],"answer":"Natural first-person patient answer"}],"suggested":["Question 1?","Question 2?","Question 3?"],"tests":[{"name":"Full blood count","findings":[{"name":"White cell count","value":"Fictional text result"}],"summary":"Short cautious interpretation of the fictional report"}],"medications":[{"name":"Generic medicine name or class","indication":"Why it may be considered in this fictional scenario"}],"references":[{"title":"Public guidance title","url":"https://www.nice.org.uk/guidance/..."}]}]}
 Requirements:
 - Choose a distinct symptom pattern and clinical category (for example primary care, cardiology, respiratory, neurology, gastroenterology, infectious disease, endocrine, renal, musculoskeletal, or dermatology). Do not repeat diagnoses or symptom patterns from the prior cases.
-- All patients are fictional adults aged 18-90. Use varied names, ages, pronouns, backgrounds, and avatar choices. Avatar accent must be one of coral, blue, sage, plum, gold, teal. hairStyle must be one of short, long, curly, covered.
+- All patients are fictional adults aged 18-90. Use varied names, ages, backgrounds, and avatar choices. Do not include pronouns or gender identity fields. Avatar accent must be one of coral, blue, sage, plum, gold, teal. hairStyle must be one of short, long, curly, covered.
 - Include 5-7 interview topics with distinct IDs, several short question keywords, and consistent patient answers. Do not disclose the hidden reference diagnosis in the opening statement or answers.
 - Include 3-4 suggested questions that correspond to topics.
 - Include EXACTLY TWO simple investigations in the tests array. Each must have a text-only name (such as a blood test, urine test, or textual ECG interpretation), 1-3 textual findings, and a cautious fictional summary. Do NOT include imaging, scans, x-rays, photographs, or image-based results. Findings and summary must be medically cautious; do not invent emergency exclusions or definitive diagnoses from a single test.
@@ -294,6 +295,97 @@ ${sourceMaterial}`;
       operation: 'roundtable response',
     });
     return parseDoctorDiscussion(text, sources, speakerOrder);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function decodeXmlText(value) {
+  const entities = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+  };
+  return value
+    .replace(/&(#x[\da-f]+|#\d+|amp|apos|gt|lt|nbsp|quot);/gi, (entity, code) => {
+      if (code[0] !== '#') return entities[code.toLowerCase()] ?? entity;
+      const hexadecimal = code[1]?.toLowerCase() === 'x';
+      const value = Number.parseInt(code.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+      return Number.isInteger(value) && value >= 0 && value <= 0x10ffff
+        ? String.fromCodePoint(value)
+        : entity;
+    });
+}
+
+function cleanArxivText(value) {
+  return decodeXmlText(decodeXmlText(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')))
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function xmlElement(entry, name) {
+  return entry.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i'))?.[1] ?? '';
+}
+
+function parseArxivResults(xml) {
+  return [...xml.matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi)].map(([, entry]) => {
+    const linkMatch = entry.match(/<link\b[^>]*href=["'](https?:\/\/arxiv\.org\/abs\/[^"']+)["'][^>]*>/i);
+    let url = '';
+    if (linkMatch) {
+      const parsedUrl = new URL(linkMatch[1]);
+      if (parsedUrl.hostname === 'arxiv.org') {
+        parsedUrl.protocol = 'https:';
+        url = parsedUrl.href;
+      }
+    }
+    const title = cleanArxivText(xmlElement(entry, 'title'));
+    const abstract = cleanArxivText(xmlElement(entry, 'summary'));
+    if (!url || !title || !abstract) return null;
+    const authors = [...entry.matchAll(/<author\b[^>]*>([\s\S]*?)<\/author>/gi)]
+      .map(([, author]) => cleanArxivText(xmlElement(author, 'name')))
+      .filter(Boolean)
+      .slice(0, 4);
+    const published = cleanArxivText(xmlElement(entry, 'published'));
+    return {
+      title: title.slice(0, 300),
+      abstract: abstract.slice(0, 1200),
+      authors,
+      year: published.match(/^\d{4}/)?.[0] ?? '',
+      url,
+      source: 'arXiv',
+    };
+  }).filter(Boolean);
+}
+
+async function searchArxiv(query) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), researchTimeoutMs);
+  const searchUrl = new URL('https://export.arxiv.org/api/query');
+  searchUrl.searchParams.set('search_query', `all:${query}`);
+  searchUrl.searchParams.set('start', '0');
+  searchUrl.searchParams.set('max_results', '5');
+  searchUrl.searchParams.set('sortBy', 'relevance');
+  searchUrl.searchParams.set('sortOrder', 'descending');
+  try {
+    const response = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/atom+xml, application/xml;q=0.9',
+        'User-Agent': 'MediNovaEducationalSimulator/1.0 (academic paper search)',
+      },
+    });
+    if (!response.ok) throw new Error(`arXiv returned HTTP ${response.status}.`);
+    const papers = parseArxivResults(await response.text());
+    return { papers };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error('arXiv search timed out. Please retry.'), { status: 504 });
+    }
+    throw Object.assign(new Error(`Could not retrieve arXiv papers: ${error.message}`), { status: 502 });
   } finally {
     clearTimeout(timer);
   }
@@ -571,6 +663,26 @@ const server = createServer(async (request, response) => {
       const status = error.status || 502;
       if (status >= 500) console.error('Additional practice case generation failed:', error);
       sendJson(response, status, { error: error.message || 'Could not generate more practice cases.' });
+    }
+    return;
+  }
+  if (request.method === 'GET' && request.url.startsWith('/api/research/arxiv?')) {
+    try {
+      const requestUrl = new URL(request.url, `http://127.0.0.1:${port}`);
+      const query = (requestUrl.searchParams.get('q') ?? '')
+        .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      if (query.length < 3) {
+        sendJson(response, 400, { error: 'Enter a discussion topic with at least three characters to search arXiv.' });
+        return;
+      }
+      sendJson(response, 200, await searchArxiv(query));
+    } catch (error) {
+      const status = error.status || 502;
+      if (status >= 500) console.error('arXiv paper search failed:', error);
+      sendJson(response, status, { error: error.message || 'Could not retrieve arXiv papers.' });
     }
     return;
   }

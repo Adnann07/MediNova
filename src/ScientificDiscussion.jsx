@@ -7,10 +7,15 @@ const apiBase = 'http://127.0.0.1:8787/api';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const doctors = [
-  { id: 'clinician', name: 'Dr. Maya Chen', role: 'Clinical perspective', color: 'coral', initials: 'MC' },
-  { id: 'researcher', name: 'Dr. Elias Okafor', role: 'Evidence synthesis', color: 'blue', initials: 'EO' },
-  { id: 'reviewer', name: 'Dr. Priya Shah', role: 'Critical appraisal', color: 'sage', initials: 'PS' },
+  { id: 'clinician', name: 'Dr. Maya Chen', role: 'Clinical perspective', color: 'coral', initials: 'MC', gender: 'female' },
+  { id: 'researcher', name: 'Dr. Elias Okafor', role: 'Evidence synthesis', color: 'blue', initials: 'EO', gender: 'male' },
+  { id: 'reviewer', name: 'Dr. Priya Shah', role: 'Critical appraisal', color: 'sage', initials: 'PS', gender: 'female' },
 ];
+
+const preferredVoiceNames = {
+  female: ['Aria', 'Jenny', 'Sonia', 'Libby', 'Michelle', 'Zira', 'Samantha', 'Google UK English Female'],
+  male: ['Guy', 'Ryan', 'Davis', 'Brian', 'Christopher', 'Eric', 'David', 'Daniel', 'Google UK English Male'],
+};
 
 function Citation({ source, onSelect }) {
   return (
@@ -33,53 +38,109 @@ export default function ScientificDiscussion() {
   const [raisingHand, setRaisingHand] = useState(false);
   const [participantQuestion, setParticipantQuestion] = useState('');
   const [listening, setListening] = useState(false);
-  const [autoPlayVoice, setAutoPlayVoice] = useState(false);
+  const [autoPlayVoice, setAutoPlayVoice] = useState(true);
   const [speakingDoctor, setSpeakingDoctor] = useState('');
-  const [speechVoices, setSpeechVoices] = useState([]);
+  const [arxivSearch, setArxivSearch] = useState({ status: 'idle', papers: [], error: '', query: '' });
   const recognitionRef = useRef(null);
   const speechQueueRef = useRef([]);
+  const playTokenRef = useRef(0);
+  const arxivControllerRef = useRef(null);
   const sources = useMemo(() => discussion?.sources ?? [], [discussion]);
 
   useEffect(() => {
-    if (!window.speechSynthesis) return undefined;
-    const updateVoices = () => setSpeechVoices(window.speechSynthesis.getVoices());
-    updateVoices();
-    window.speechSynthesis.addEventListener('voiceschanged', updateVoices);
     return () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', updateVoices);
-      window.speechSynthesis.cancel();
+      playTokenRef.current += 1;
+      speechQueueRef.current = [];
+      window.speechSynthesis?.cancel();
       recognitionRef.current?.stop();
+      arxivControllerRef.current?.abort();
     };
   }, []);
 
   function stopSpeech() {
+    playTokenRef.current += 1;
     speechQueueRef.current = [];
     window.speechSynthesis?.cancel();
     setSpeakingDoctor('');
   }
 
-  function playTurns(turns) {
+  async function getVoicesReady() {
+    const synth = window.speechSynthesis;
+    const waitForVoiceChange = (timeoutMs) => new Promise((resolve) => {
+      let timeout;
+      const finish = () => {
+        synth.removeEventListener('voiceschanged', finish);
+        window.clearTimeout(timeout);
+        resolve();
+      };
+      timeout = window.setTimeout(finish, timeoutMs);
+      synth.addEventListener('voiceschanged', finish, { once: true });
+    });
+    if (!synth.getVoices().length) await waitForVoiceChange(2500);
+    if (!synth.getVoices().some((voice) => /natural|online/i.test(voice.name))) await waitForVoiceChange(800);
+    return synth.getVoices();
+  }
+
+  function chooseVoice(voices, gender, usedNames) {
+    const english = voices.filter((voice) => /^en(?:-|_|$)/i.test(voice.lang));
+    const natural = english.filter((voice) => /natural|online/i.test(voice.name));
+    const pool = natural.length ? natural : english;
+    const available = pool.filter((voice) => !usedNames.has(voice.name));
+    const candidates = available.length ? available : pool;
+    for (const preferredName of preferredVoiceNames[gender]) {
+      const match = candidates.find((voice) => voice.name.toLowerCase().includes(preferredName.toLowerCase()));
+      if (match) return match;
+    }
+    return candidates[0] || pool[0] || null;
+  }
+
+  async function playTurns(turns) {
     if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance !== 'function') {
       setError('Voice playback is not supported in this browser.');
       return;
     }
-    speechQueueRef.current = turns.filter((turn) => !turn.participant).slice();
-    window.speechSynthesis.cancel();
+    stopSpeech();
+    const token = playTokenRef.current;
+    const voices = await getVoicesReady();
+    if (token !== playTokenRef.current) return;
+    const voiceByDoctor = {};
+    const usedNames = new Set();
+    for (const doctor of doctors) {
+      const voice = chooseVoice(voices, doctor.gender, usedNames);
+      if (voice) {
+        voiceByDoctor[doctor.name] = voice;
+        usedNames.add(voice.name);
+      }
+    }
+    speechQueueRef.current = turns
+      .filter((turn) => !turn.participant)
+      .flatMap((turn) => {
+        const doctorIndex = Math.max(0, doctors.findIndex((doctor) => doctor.name === turn.speaker));
+        const sentences = turn.text.match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g) || [turn.text];
+        return sentences.map((text) => ({ speaker: turn.speaker, text: text.trim(), doctorIndex }));
+      })
+      .filter((turn) => turn.text);
     const speakNext = () => {
+      if (token !== playTokenRef.current) return;
       const turn = speechQueueRef.current.shift();
       if (!turn) {
         setSpeakingDoctor('');
         return;
       }
-      const doctorIndex = Math.max(0, doctors.findIndex((doctor) => doctor.name === turn.speaker));
-      const englishVoices = speechVoices.filter((voice) => /^en(?:-|$)/i.test(voice.lang));
       const utterance = new window.SpeechSynthesisUtterance(turn.text);
-      if (englishVoices.length) utterance.voice = englishVoices[doctorIndex % englishVoices.length];
-      utterance.rate = [0.96, 1, 0.98][doctorIndex];
-      utterance.pitch = [1.04, 0.94, 1.12][doctorIndex];
+      const voice = voiceByDoctor[turn.speaker];
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = [0.92, 0.9, 0.92][turn.doctorIndex];
+      utterance.pitch = 1;
       setSpeakingDoctor(turn.speaker);
       utterance.onend = speakNext;
       utterance.onerror = (event) => {
+        if (token !== playTokenRef.current) return;
         if (!['canceled', 'interrupted'].includes(event.error)) setError(`Voice playback failed: ${event.error}.`);
         speakNext();
       };
@@ -88,11 +149,29 @@ export default function ScientificDiscussion() {
     speakNext();
   }
 
+  async function searchArxiv(query) {
+    arxivControllerRef.current?.abort();
+    const controller = new AbortController();
+    arxivControllerRef.current = controller;
+    setArxivSearch({ status: 'loading', papers: [], error: '', query });
+    try {
+      const response = await fetch(`${apiBase}/research/arxiv?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `arXiv search failed (HTTP ${response.status}).`);
+      setArxivSearch({ status: 'ready', papers: result.papers, error: '', query });
+    } catch (searchError) {
+      if (searchError.name === 'AbortError') return;
+      setArxivSearch({ status: 'error', papers: [], error: searchError.message || 'Could not search arXiv.', query });
+    }
+  }
+
   function chooseFiles(fileList) {
     const selected = Array.from(fileList);
     setError('');
     setSession(null);
     setDiscussion(null);
+    arxivControllerRef.current?.abort();
+    setArxivSearch({ status: 'idle', papers: [], error: '', query: '' });
     if (selected.length > 3) {
       setFiles([]);
       setError('Choose no more than three PDFs at a time.');
@@ -203,7 +282,8 @@ export default function ScientificDiscussion() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Could not generate discussion (HTTP ${response.status}).`);
       setDiscussion(result);
-      if (autoPlayVoice) playTurns(result.discussion);
+      if (autoPlayVoice) void playTurns(result.discussion);
+      void searchArxiv(result.topic);
     } catch (generationError) {
       setError(generationError.message || 'Could not generate the discussion.');
     } finally {
@@ -237,9 +317,10 @@ export default function ScientificDiscussion() {
         discussion: [...current.discussion, participantTurn, ...result.discussion],
         sources: [...new Map([...current.sources, ...result.sources].map((source) => [source.id, source])).values()],
       }));
+      void searchArxiv(`${discussion.topic} ${cleanQuestion}`);
       setParticipantQuestion('');
       setRaisingHand(false);
-      if (autoPlayVoice) playTurns(result.discussion);
+      if (autoPlayVoice) void playTurns(result.discussion);
     } catch (responseError) {
       setError(responseError.message || 'Could not continue the discussion.');
     } finally {
@@ -333,7 +414,7 @@ export default function ScientificDiscussion() {
         <div className="discussion-layout">
           <section className="discussion-workspace">
             <section className="discussion-panel upload-panel">
-              <div className="discussion-panel-heading"><span className="setup-number">01</span><div><h2>Add learning material</h2><p>PDFs are parsed in your browser; extracted text is indexed in local API memory for up to two hours. Retrieved excerpts are sent to your configured Ollama service for discussion.</p><p className="discussion-privacy-note">Use de-identified educational material only. Do not upload identifiable patient records or confidential documents.</p></div></div>
+              <div className="discussion-panel-heading"><span className="setup-number">01</span><div><h2>Add learning material</h2><p>PDFs are parsed in your browser; extracted text is indexed in local API memory for up to two hours. Retrieved excerpts are sent to your configured Ollama service for discussion.</p><p className="discussion-privacy-note">Use de-identified educational material only. Do not upload identifiable patient records or include patient details in your topic or questions; search terms go to arXiv’s public API.</p></div></div>
               <label
                 className={`pdf-dropzone ${files.length ? 'has-files' : ''} ${dragging ? 'is-dragging' : ''}`}
                 onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
@@ -417,6 +498,24 @@ export default function ScientificDiscussion() {
             {!sources.length
               ? <div className="source-empty">Relevant page excerpts will appear here when a discussion is generated.</div>
               : sources.map((source) => <article className="source-card" id={`source-${source.id}`} key={source.id}><div className="source-card-meta"><span>{source.documentName}</span><strong>PAGE {source.pageNumber}</strong></div><p>{source.text}</p></article>)}
+            <section className="arxiv-section" aria-live="polite">
+              <div className="discussion-sources-heading arxiv-heading">
+                <span className="section-kicker">RELATED RESEARCH</span>
+                <h2>arXiv papers</h2>
+                <p>Discussion topics and questions are searched through arXiv’s public API. These papers are further reading, not evidence used to generate the discussion.</p>
+              </div>
+              {arxivSearch.status === 'idle' && <div className="source-empty">Related papers will appear when the doctors start discussing.</div>}
+              {arxivSearch.status === 'loading' && <div className="source-empty" role="status">Searching arXiv for “{arxivSearch.query}” …</div>}
+              {arxivSearch.status === 'error' && <div className="arxiv-error" role="alert">{arxivSearch.error}<button type="button" onClick={() => void searchArxiv(arxivSearch.query)}>Retry search</button></div>}
+              {arxivSearch.status === 'ready' && !arxivSearch.papers.length && <div className="source-empty">No relevant arXiv papers found for this discussion topic.</div>}
+              {arxivSearch.papers.map((paper) => <article className="arxiv-paper" key={paper.url}>
+                <div className="arxiv-paper-meta">{[paper.source, paper.year].filter(Boolean).join(' · ')}</div>
+                <h3>{paper.title}</h3>
+                {paper.authors.length > 0 && <p className="arxiv-authors">{paper.authors.join(', ')}{paper.authors.length === 4 ? ', et al.' : ''}</p>}
+                <p className="arxiv-abstract">{paper.abstract}</p>
+                <a href={paper.url} target="_blank" rel="noopener noreferrer">Read paper on arXiv ↗</a>
+              </article>)}
+            </section>
           </aside>
         </div>
         <footer className="discussion-footer"><span>“Making mistakes before it counts.”</span><span>Fictional AI-generated discussion · Verify against original sources.</span></footer>

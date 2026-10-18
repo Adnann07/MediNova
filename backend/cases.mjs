@@ -133,7 +133,6 @@ export function normalizeGeneratedCases(payload, batchId) {
       age: Number.isInteger(item.patient.age) && item.patient.age >= 18 && item.patient.age <= 90
         ? item.patient.age
         : (() => { throw new Error('AI-generated cases must feature adult patients aged 18-90.'); })(),
-      pronouns: requiredText(item.patient.pronouns, 'patient pronouns', 40),
       initials,
       accent: item.avatar.accent,
       hairStyle: item.avatar.hairStyle,
@@ -161,7 +160,6 @@ export function toPublicCase(caseFile) {
     category: caseFile.category,
     patient: caseFile.patient,
     age: caseFile.age,
-    pronouns: caseFile.pronouns,
     initials: caseFile.initials,
     accent: caseFile.accent,
     hairStyle: caseFile.hairStyle,

@@ -9,7 +9,7 @@ function makeCase(overrides = {}) {
     referencePattern: 'A fictional pattern requiring careful history.',
     clinicalContext: 'A fictional adult patient describes an intermittent symptom.',
     learning: 'Use a careful history and supervised clinical reasoning.',
-    patient: { name: 'Alex Example', age: 34, pronouns: 'they/them' },
+    patient: { name: 'Alex Example', age: 34 },
     avatar: { accent: 'teal', hairStyle: 'curly' },
     opening: 'I have had this symptom for a few days.',
     topics: Array.from({ length: 5 }, (_, index) => ({
@@ -51,6 +51,13 @@ test('normalizes one AI-created case for on-demand case generation', () => {
   assert.equal(cases[0].id, 'singlecase-1-a-fictional-recurring-symptom');
 });
 
+test('does not require or expose patient pronouns', () => {
+  const [caseFile] = normalizeGeneratedCases({
+    cases: [makeCase({ patient: { name: 'Alex Example', age: 34, pronouns: 'they/them' } })],
+  }, 'pronouns');
+  assert.equal(Object.hasOwn(caseFile, 'pronouns'), false);
+});
+
 test('rejects image-based investigations', () => {
   assert.throws(
     () => normalizeGeneratedCases(makeBatch({
@@ -84,7 +91,7 @@ test('rejects generated medication dose details', () => {
 test('rejects cases for minors', () => {
   assert.throws(
     () => normalizeGeneratedCases(makeBatch({
-      patient: { name: 'Alex Example', age: 16, pronouns: 'they/them' },
+      patient: { name: 'Alex Example', age: 16 },
     }), 'batch1234'),
     /adult patients/,
   );

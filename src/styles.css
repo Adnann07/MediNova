@@ -361,6 +361,17 @@ button:disabled { cursor: not-allowed; }
 .source-card-meta span { overflow-wrap: anywhere; }
 .source-card-meta strong { flex: 0 0 auto; color: #c05a55; font-size: 6px; letter-spacing: .4px; }
 .source-card > p { margin: 7px 0 0; color: #766c6d; font-size: 8px; line-height: 1.65; }
+.arxiv-section { margin-top: 18px; padding-top: 15px; border-top: 1px solid #f0eae9; }
+.arxiv-heading { margin-bottom: 10px; }
+.arxiv-paper { margin-top: 8px; padding: 10px; border: 1px solid #f0eae9; border-radius: 7px; background: #fffdfd; }
+.arxiv-paper-meta { color: #bd5b55; font-size: 7px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.arxiv-paper h3 { margin: 5px 0; color: #5a5051; font: 600 9px/1.45 'DM Sans', sans-serif; }
+.arxiv-paper .arxiv-authors { margin: 0; color: #9a9091; font-size: 7px; line-height: 1.5; }
+.arxiv-paper .arxiv-abstract { display: -webkit-box; margin: 6px 0; overflow: hidden; color: #786e6f; font-size: 8px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
+.arxiv-paper > a { color: #bd5651; font-size: 8px; font-weight: 600; text-decoration: none; }
+.arxiv-paper > a:hover { text-decoration: underline; }
+.arxiv-error { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 11px; border: 1px solid #f1d9d7; border-radius: 7px; color: #a8423e; background: #fff6f5; font-size: 8px; line-height: 1.5; }
+.arxiv-error button { border: 1px solid #edcfcc; border-radius: 5px; padding: 5px 8px; color: #b94f4a; background: #fff; font-size: 8px; cursor: pointer; }
 .discussion-footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 14px; color: #a19899; font-size: 7px; }
 .discussion-footer > span:first-child { color: #c66a65; font-weight: 600; }
 
