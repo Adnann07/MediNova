@@ -84,8 +84,8 @@ function normalizeMedication(medication, index) {
 }
 
 export function normalizeGeneratedCases(payload, batchId) {
-  if (!Array.isArray(payload?.cases) || payload.cases.length < 3 || payload.cases.length > 6) {
-    throw new Error('AI must generate between 3 and 6 distinct fictional practice cases.');
+  if (!Array.isArray(payload?.cases) || payload.cases.length < 1 || payload.cases.length > 6) {
+    throw new Error('AI must generate between 1 and 6 distinct fictional practice cases.');
   }
 
   const cases = payload.cases.map((item, index) => {

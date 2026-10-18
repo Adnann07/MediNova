@@ -122,19 +122,19 @@ function sendJson(response, status, payload) {
 async function generatePracticeCases() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), caseGenerationTimeoutMs);
-  const prompt = `Create exactly FOUR DISTINCT fictional adult clinical-interview practice cases for a medical education simulator called "Making mistakes before it counts."
-Return only JSON with this shape:
+  const prompt = `Create exactly ONE original fictional adult clinical-interview practice case for a medical education simulator called "Making mistakes before it counts."
+Return only valid JSON with a top-level "cases" array containing exactly one case, using this shape:
 {"cases":[{"title":"...","category":"...","referencePattern":"...","clinicalContext":"...","learning":"...","patient":{"name":"...","age":34,"pronouns":"they/them"},"avatar":{"accent":"coral","hairStyle":"short"},"opening":"First-person opening symptom statement","topics":[{"id":"onset","label":"Onset and duration","keywords":["when","start"],"answer":"Natural first-person patient answer"}],"suggested":["Question 1?","Question 2?","Question 3?"],"tests":[{"name":"Full blood count","findings":[{"name":"White cell count","value":"Fictional text result"}],"summary":"Short cautious interpretation of the fictional report"}],"medications":[{"name":"Generic medicine name or class","indication":"Why it may be considered in this fictional scenario"}],"references":[{"title":"Public guidance title","url":"https://www.nice.org.uk/guidance/..."}]}]}
 Requirements:
-- Make the four cases substantially different in symptoms and clinical category (choose from primary care, cardiology, respiratory, neurology, gastroenterology, infectious disease, endocrine, renal, musculoskeletal, or dermatology). Do not repeat diagnoses or symptom patterns.
+- Choose a distinct symptom pattern and clinical category (for example primary care, cardiology, respiratory, neurology, gastroenterology, infectious disease, endocrine, renal, musculoskeletal, or dermatology). Do not repeat diagnoses or symptom patterns from the prior cases.
 - All patients are fictional adults aged 18-90. Use varied names, ages, pronouns, backgrounds, and avatar choices. Avatar accent must be one of coral, blue, sage, plum, gold, teal. hairStyle must be one of short, long, curly, covered.
 - Include 5-7 interview topics with distinct IDs, several short question keywords, and consistent patient answers. Do not disclose the hidden reference diagnosis in the opening statement or answers.
 - Include 3-4 suggested questions that correspond to topics.
-- Include 2-4 simple investigations which can be represented entirely as text, such as blood tests, urine tests, or textual ECG interpretation. Do NOT include imaging, scans, x-rays, photographs, or image-based results. Findings and summary must be explicitly fictional and medically cautious; do not invent emergency exclusions or definitive diagnoses from a single test.
+- Include EXACTLY TWO simple investigations in the tests array. Each must have a text-only name (such as a blood test, urine test, or textual ECG interpretation), 1-3 textual findings, and a cautious fictional summary. Do NOT include imaging, scans, x-rays, photographs, or image-based results. Findings and summary must be medically cautious; do not invent emergency exclusions or definitive diagnoses from a single test.
 - Include 1-3 generic medicine/class choices that could be discussed for this fictional scenario, or an empty list if medication is not appropriate. Give no doses, frequencies, routes, durations, prescriptions, controlled drugs, or certainty that treatment is safe. These are educational choices only.
 - Every case must include a hidden referencePattern, short fictional context, one learning note emphasizing safe real-world limitations, and 1-2 genuine NICE or NHS guidance URLs that match the case. Use exact publicly accessible NICE/NHS guidance URLs; never invent citations.
 - Do not include patient identifiers, real patient data, medicine doses, or instructions for real-world self-treatment.
-- Make case wording and investigation/medicine data internally consistent. This is not real medical care.`;
+- Make the case wording and both investigations internally consistent. Always return exactly two valid text-based investigations; an empty, missing, image-based, or single-investigation tests array is invalid. This is not real medical care.`;
   const priorCases = [...evaluationCases.values()].map((caseFile) => ({
     title: caseFile.title,
     referencePattern: caseFile.referencePattern,
@@ -142,21 +142,37 @@ Requirements:
   const distinctnessPrompt = `Do not repeat or closely duplicate these previously generated scenarios: ${JSON.stringify(priorCases)}.`;
 
   try {
-    const text = await requestModelText({
-      prompt: `${prompt}\n${distinctnessPrompt}`,
-      generationConfig: { temperature: 0.8, maxOutputTokens: 14000 },
-      signal: controller.signal,
-      operation: 'practice case generation',
-    });
-    let payload;
-    try {
-      payload = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
-    } catch {
-      throw new Error('AI returned unreadable practice cases. Please generate another batch.');
+    let lastValidationError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const correction = lastValidationError
+        ? `\nYour previous response was invalid: ${lastValidationError.message} Return one corrected case with exactly two distinct text-based investigations and no other test types.`
+        : '';
+      const text = await requestModelText({
+        prompt: `${prompt}\n${distinctnessPrompt}${correction}`,
+        generationConfig: { temperature: 0.8, maxOutputTokens: 5000 },
+        signal: controller.signal,
+        operation: 'practice case generation',
+      });
+      let payload;
+      try {
+        payload = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+      } catch {
+        lastValidationError = new Error('AI returned unreadable practice case JSON.');
+        continue;
+      }
+      if (!Array.isArray(payload?.cases) || payload.cases.length !== 1) {
+        lastValidationError = new Error('AI must return exactly one fictional practice case.');
+        continue;
+      }
+      try {
+        const cases = normalizeGeneratedCases(payload, randomUUID().slice(0, 8));
+        for (const caseFile of cases) evaluationCases.set(caseFile.id, caseFile);
+        return cases;
+      } catch (error) {
+        lastValidationError = error;
+      }
     }
-    const cases = normalizeGeneratedCases(payload, randomUUID().slice(0, 8));
-    for (const caseFile of cases) evaluationCases.set(caseFile.id, caseFile);
-    return cases;
+    throw new Error(`Could not generate a valid practice case after retrying. ${lastValidationError?.message || 'Please try again.'}`);
   } finally {
     clearTimeout(timer);
   }
@@ -538,7 +554,7 @@ const server = createServer(async (request, response) => {
     try {
       loadLocalEnvironment();
       await ensurePracticeCases();
-      sendJson(response, 200, { cases: [...evaluationCases.values()].map(toPublicCase) });
+      sendJson(response, 200, { cases: [...evaluationCases.values()].slice(0, 1).map(toPublicCase) });
     } catch (error) {
       const status = error.status || 502;
       if (status >= 500) console.error('Practice case generation failed:', error);

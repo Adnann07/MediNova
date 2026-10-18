@@ -45,6 +45,12 @@ test('normalizes a batch of AI-created adult cases and assigns unique case IDs',
   assert.equal(cases[0].tests[0].findings[0].value, 'Fictional text result');
 });
 
+test('normalizes one AI-created case for on-demand case generation', () => {
+  const cases = normalizeGeneratedCases({ cases: [makeCase()] }, 'singlecase');
+  assert.equal(cases.length, 1);
+  assert.equal(cases[0].id, 'singlecase-1-a-fictional-recurring-symptom');
+});
+
 test('rejects image-based investigations', () => {
   assert.throws(
     () => normalizeGeneratedCases(makeBatch({

@@ -137,7 +137,7 @@ function TrainingRoom() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Could not generate cases (HTTP ${response.status}).`);
       setCases((current) => [...current, ...result.cases]);
-      if (!caseId && result.cases.length) setCaseId(result.cases[0].id);
+      if (result.cases.length) changeCase(result.cases[0].id);
     } catch (error) {
       setCasesError(error.message || 'Could not generate more practice cases.');
     } finally {
@@ -356,10 +356,10 @@ function TrainingRoom() {
         </div>
 
         <section className="setup-bar" aria-label="Configure practice case">
-          <div className="setup-label"><span className="setup-number">01</span><div><strong>Set up your practice</strong><small>Choose an AI-generated case</small></div></div>
+          <div className="setup-label"><span className="setup-number">01</span><div><strong>Set up your practice</strong><small>Start with one case; generate another when ready</small></div></div>
           <label className="select-field case-select"><span>CASE FOCUS</span><select value={caseId} disabled={assessmentLoading || labLoading || medicationLoading} onChange={(event) => changeCase(event.target.value)}>{cases.map((item) => <option key={item.id} value={item.id}>{item.category}: {item.title}</option>)}</select><Icon name="chevron" size={15} /></label>
           <label className="select-field difficulty-select"><span>DIFFICULTY</span><select value={difficulty} disabled={assessmentLoading || labLoading} onChange={(event) => setDifficulty(event.target.value)}><option>Beginner</option><option>Standard</option><option>Advanced</option></select><Icon name="chevron" size={15} /></label>
-          <button className="generate-cases-button" type="button" onClick={generateMoreCases} disabled={moreCasesLoading || assessmentLoading || labLoading || medicationLoading}><Icon name={moreCasesLoading ? 'clock' : 'refresh'} size={14} />{moreCasesLoading ? 'Generating…' : 'Generate 4 more'}</button>
+          <button className="generate-cases-button" type="button" onClick={generateMoreCases} disabled={moreCasesLoading || assessmentLoading || labLoading || medicationLoading}><Icon name={moreCasesLoading ? 'clock' : 'refresh'} size={14} />{moreCasesLoading ? 'Generating…' : 'Generate a new case'}</button>
           <div className="setup-status"><span className="setup-status-dot" /> {cases.length} cases</div>
         </section>
         {casesError && <p className="lab-error" role="alert">{casesError}</p>}
