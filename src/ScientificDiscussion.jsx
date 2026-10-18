@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { createWorker } from 'tesseract.js';
+import { extractPdfPages } from './pdfMaterials.js';
 
-const apiBase = 'http://127.0.0.1:8787/api';
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+const apiBase = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8787/api';
 
 const doctors = [
   { id: 'clinician', name: 'Dr. Maya Chen', role: 'Clinical perspective', color: 'coral', initials: 'MC', gender: 'female' },
@@ -195,59 +192,8 @@ export default function ScientificDiscussion() {
     setPreparing(true);
     setError('');
     setDiscussion(null);
-    let ocrWorker;
     try {
-      const pages = [];
-      for (const file of files) {
-        setStatus(`Reading ${file.name}…`);
-        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-        if (pdf.numPages > 40 || pages.length + pdf.numPages > 80) {
-          throw new Error('Keep each PDF to 40 pages or fewer and the combined upload to 80 pages or fewer.');
-        }
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-          setStatus(`Extracting ${file.name} · page ${pageNumber} of ${pdf.numPages}`);
-          const page = await pdf.getPage(pageNumber);
-          const textContent = await page.getTextContent();
-          let text = textContent.items
-            .filter((item) => 'str' in item)
-            .map((item) => item.str)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          if (text.length < 40) {
-            if (!ocrWorker) {
-              setStatus('Starting local OCR for scanned pages…');
-              ocrWorker = await createWorker('eng', 1, {
-                logger: (message) => {
-                  if (message.status === 'recognizing text') {
-                    setStatus(`Reading scanned page · ${Math.round((message.progress || 0) * 100)}%`);
-                  }
-                },
-              });
-            }
-            const baseViewport = page.getViewport({ scale: 1 });
-            const viewport = page.getViewport({ scale: Math.min(2, 1400 / baseViewport.width) });
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.ceil(viewport.width);
-            canvas.height = Math.ceil(viewport.height);
-            const context = canvas.getContext('2d');
-            if (!context) throw new Error('Could not create a canvas for OCR in this browser.');
-            await page.render({ canvasContext: context, viewport }).promise;
-            const recognized = await ocrWorker.recognize(canvas);
-            if (recognized.data.text.trim().length > text.length) text = recognized.data.text.trim();
-            canvas.width = 0;
-            canvas.height = 0;
-          }
-
-          if (text.trim().length >= 20) {
-            pages.push({ documentName: file.name, pageNumber, text: text.slice(0, 10_000) });
-          }
-          page.cleanup();
-        }
-        await pdf.destroy();
-      }
-      if (!pages.length) throw new Error('No readable text was found. Try a clearer PDF or one with selectable text.');
+      const pages = await extractPdfPages(files, setStatus);
       setStatus('Preparing searchable passages…');
       const response = await fetch(`${apiBase}/discussions`, {
         method: 'POST',
@@ -262,7 +208,6 @@ export default function ScientificDiscussion() {
       setStatus('');
       setError(prepareError.message || 'Could not read these PDFs.');
     } finally {
-      if (ocrWorker) await ocrWorker.terminate();
       setPreparing(false);
     }
   }
@@ -397,6 +342,9 @@ export default function ScientificDiscussion() {
         <nav className="discussion-nav" aria-label="Main navigation">
           <a href="/">Practice room</a>
           <span aria-current="page">Scientific discussion</span>
+          <a href="/case-generator">Generate from PDFs</a>
+          <a href="/image-assessment">Image assessment</a>
+          <a href="/report-assessment">Lab report</a>
         </nav>
         <span className="training-chip"><span /> EDUCATION MODE</span>
       </header>

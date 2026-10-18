@@ -1,8 +1,23 @@
-const trustedHosts = new Set(['nice.org.uk', 'www.nice.org.uk', 'nhs.uk', 'www.nhs.uk']);
+const guidelinePublishers = new Map([
+  ['nice.org.uk', 'National Institute for Health and Care Excellence (NICE)'],
+  ['www.nice.org.uk', 'National Institute for Health and Care Excellence (NICE)'],
+  ['nhs.uk', 'National Health Service (NHS)'],
+  ['www.nhs.uk', 'National Health Service (NHS)'],
+  ['escardio.org', 'European Society of Cardiology (ESC)'],
+  ['www.escardio.org', 'European Society of Cardiology (ESC)'],
+  ['professional.heart.org', 'American Heart Association (AHA)'],
+  ['heart.org', 'American Heart Association (AHA)'],
+  ['www.heart.org', 'American Heart Association (AHA)'],
+  ['ginasthma.org', 'Global Initiative for Asthma (GINA)'],
+  ['www.ginasthma.org', 'Global Initiative for Asthma (GINA)'],
+  ['goldcopd.org', 'Global Initiative for Chronic Obstructive Lung Disease (GOLD)'],
+  ['www.goldcopd.org', 'Global Initiative for Chronic Obstructive Lung Disease (GOLD)'],
+]);
 const allowedAccents = new Set(['coral', 'blue', 'sage', 'plum', 'gold', 'teal']);
 const allowedHairStyles = new Set(['short', 'long', 'curly', 'covered']);
 const nonTextInvestigation = /\b(x-?ray|radiograph|ultrasound|sonogram|ct scan|mri|imaging|photograph|image|scan)\b/i;
 const dosePattern = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|micrograms?|g|ml|millilit(?:er|re)s?)\b/i;
+const medicineInstructionPattern = /\b(?:dose|dosage|dosing|once|twice|daily|weekly|monthly|hourly|every\s+\d+\s*(?:hours?|days?|weeks?)|per\s+day|by\s+mouth|orally)\b/i;
 
 function requiredText(value, field, maximum = 500) {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > maximum) {
@@ -62,13 +77,14 @@ function normalizeReferences(references) {
     } catch {
       throw new Error('AI-generated case contains an invalid clinical reference URL.');
     }
-    if (url.protocol !== 'https:' || !trustedHosts.has(url.hostname)) {
-      throw new Error('AI-generated references must link to NICE or NHS guidance.');
+    const publisher = guidelinePublishers.get(url.hostname);
+    if (url.protocol !== 'https:' || !publisher) {
+      throw new Error('AI-generated references must link to official NICE, NHS, ESC, AHA, GINA, or GOLD guidance.');
     }
     return {
       id: `R${index + 1}`,
       title: requiredText(reference.title, 'reference title', 180),
-      publisher: url.hostname.includes('nice.org.uk') ? 'National Institute for Health and Care Excellence (NICE)' : 'National Health Service (NHS)',
+      publisher,
       url: url.href,
     };
   });
@@ -118,6 +134,20 @@ function normalizeMedication(medication, index) {
   };
 }
 
+function normalizePharmacyMedicine(medicine) {
+  const name = requiredText(medicine?.name, 'fictional pharmacy medicine name', 100);
+  const reason = requiredText(medicine.reason, 'fictional pharmacy medicine reason', 240);
+  const reportedEffect = requiredText(medicine.reportedEffect, 'fictional pharmacy medicine effect', 240);
+  if ([name, reason, reportedEffect].some((value) => dosePattern.test(value) || medicineInstructionPattern.test(value))) {
+    throw new Error('The fictional pharmacy medicine must not include dosing or use instructions.');
+  }
+  return {
+    name,
+    reason,
+    reportedEffect,
+  };
+}
+
 export function normalizeGeneratedCases(payload, batchId) {
   if (!Array.isArray(payload?.cases) || payload.cases.length < 1 || payload.cases.length > 6) {
     throw new Error('AI must generate between 1 and 6 distinct fictional practice cases.');
@@ -148,6 +178,15 @@ export function normalizeGeneratedCases(payload, batchId) {
     if (!topics.some(isOnsetTopic)) {
       throw new Error('AI-generated patient cases must include an onset and duration interview topic.');
     }
+    const pharmacyMedicine = normalizePharmacyMedicine(item.pharmacyMedicine);
+    const medicationHistory = topics.some((topic) => (
+      /\b(medicine|medication|pharmacy)\b/i.test(`${topic.id} ${topic.label}`)
+      && topic.answer.toLowerCase().includes(pharmacyMedicine.name.toLowerCase())
+    ));
+    if (!requiredText(item.opening, 'patient opening statement', 500).toLowerCase().includes(pharmacyMedicine.name.toLowerCase())
+      || !medicationHistory) {
+      throw new Error('AI-generated patient speech and a medication-history topic must mention the pharmacy medicine.');
+    }
     if (new Set(topics.map((topic) => topic.id)).size !== topics.length) {
       throw new Error('AI-generated case contains duplicate interview topic IDs.');
     }
@@ -175,6 +214,7 @@ export function normalizeGeneratedCases(payload, batchId) {
       accent: item.avatar.accent,
       hairStyle: item.avatar.hairStyle,
       opening: requiredText(item.opening, 'patient opening statement', 500),
+      pharmacyMedicine,
       topics,
       suggested: item.suggested.map((question) => requiredText(question, 'suggested question', 160)),
       tests,
@@ -206,5 +246,11 @@ export function toPublicCase(caseFile) {
     topics: caseFile.topics,
     suggested: caseFile.suggested,
     learning: caseFile.learning,
+    references: caseFile.references,
+    ...(caseFile.materialCitations ? {
+      acuity: caseFile.acuity,
+      clinicalContext: caseFile.clinicalContext,
+      materialCitations: caseFile.materialCitations,
+    } : {}),
   };
 }

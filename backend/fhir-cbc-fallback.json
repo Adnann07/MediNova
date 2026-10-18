@@ -1,0 +1,65 @@
+{
+  "id": "ghp-local-fallback",
+  "status": "final",
+  "title": "General Health Profile",
+  "panel": "Complete blood count (hemogram) panel - Blood by Automated count",
+  "referenceInterpretation": null,
+  "observations": [
+    {
+      "name": "Haemoglobin",
+      "value": 176,
+      "unit": "g/L",
+      "referenceRanges": ["135–180 g/L"],
+      "interpretation": []
+    },
+    {
+      "name": "Haematocrit",
+      "value": 55,
+      "unit": "%",
+      "referenceRanges": ["38–52 %"],
+      "interpretation": []
+    },
+    {
+      "name": "Mean Cell Volume",
+      "value": 99,
+      "unit": "fL",
+      "referenceRanges": ["80–98 fL"],
+      "interpretation": []
+    },
+    {
+      "name": "Platelet Count",
+      "value": 444,
+      "unit": "x10*9/L",
+      "referenceRanges": ["150–450 x10*9/L"],
+      "interpretation": []
+    },
+    {
+      "name": "White Cell Count",
+      "value": 4.6,
+      "unit": "x10*9/L",
+      "referenceRanges": ["4–11 x10*9/L"],
+      "interpretation": []
+    },
+    {
+      "name": "Neutrophils",
+      "value": 0.9,
+      "unit": "x10*9/L",
+      "referenceRanges": ["2–7.5 x10*9/L"],
+      "interpretation": []
+    },
+    {
+      "name": "Lymphocytes",
+      "value": 0.9,
+      "unit": "x10*9/L",
+      "referenceRanges": ["1.1–4 x10*9/L"],
+      "interpretation": []
+    },
+    {
+      "name": "Eosinophils",
+      "value": 0.92,
+      "unit": "x10*9/L",
+      "referenceRanges": ["0.04–0.4 x10*9/L"],
+      "interpretation": []
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import {
   createKnowledgeChunks,
   normalizeKnowledgeBase,
   parseDoctorDiscussion,
+  retrieveRepresentativePassages,
   retrieveRelevantPassages,
 } from './discussion.mjs';
 
@@ -42,6 +43,18 @@ test('retrieval ranks passages related to the requested topic', () => {
   const results = retrieveRelevantPassages(chunks, 'acute chest pain electrocardiogram cardiac biomarkers');
   assert.equal(results[0].documentName, 'cardiology.pdf');
   assert.equal(results[0].pageNumber, 3);
+});
+
+test('representative retrieval selects passages without requiring a user search query', () => {
+  const manyPages = Array.from({ length: 5 }, (_, index) => ({
+    documentName: 'teaching.pdf',
+    pageNumber: index + 1,
+    text: `Distinctive clinical teaching information section ${index} with evidence, symptoms, laboratory findings, and assessment details.`,
+  }));
+  const chunks = createKnowledgeChunks(manyPages);
+  const results = retrieveRepresentativePassages(chunks, 3);
+  assert.equal(results.length, 3);
+  assert.equal(new Set(results.map((chunk) => chunk.pageNumber)).size, 3);
 });
 
 test('requires all three speakers and citations from retrieved sources', () => {

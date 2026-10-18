@@ -11,12 +11,19 @@ function makeCase(overrides = {}) {
     learning: 'Use a careful history and supervised clinical reasoning.',
     patient: { name: 'Alex Example', age: 34 },
     avatar: { accent: 'teal', hairStyle: 'curly' },
-    opening: 'I have had this symptom for a few days.',
+    opening: 'I have had this symptom for a few days and took paracetamol after a pharmacy suggestion.',
+    pharmacyMedicine: {
+      name: 'paracetamol',
+      reason: 'I hoped it might ease the discomfort.',
+      reportedEffect: 'It did not make much difference.',
+    },
     topics: Array.from({ length: 5 }, (_, index) => ({
-      id: index === 0 ? 'onset' : `topic-${index}`,
-      label: index === 0 ? 'Onset and duration' : `History area ${index}`,
-      keywords: index === 0 ? ['how long', 'when', 'start', 'since'] : [`topic ${index}`],
-      answer: index === 0 ? 'It started a few days ago.' : `Fictional answer ${index}.`,
+      id: index === 0 ? 'onset' : index === 1 ? 'medication-history' : `topic-${index}`,
+      label: index === 0 ? 'Onset and duration' : index === 1 ? 'Pharmacy medicine history' : `History area ${index}`,
+      keywords: index === 0
+        ? ['how long', 'when', 'start', 'since']
+        : index === 1 ? ['pharmacy', 'medicine', 'medication', 'what have you taken'] : [`topic ${index}`],
+      answer: index === 0 ? 'It started a few days ago.' : index === 1 ? 'I took paracetamol after a pharmacy suggestion.' : `Fictional answer ${index}.`,
     })),
     suggested: ['When did this begin?', 'What makes it change?', 'What else have you noticed?'],
     tests: [
@@ -43,7 +50,10 @@ test('normalizes a batch of AI-created adult cases and assigns unique case IDs',
   assert.equal(cases[0].initials, 'AE');
   assert.equal(cases[0].references[0].id, 'R1');
   assert.equal(cases[0].tests[0].findings[0].value, 'Fictional text result');
-  assert.equal(toPublicCase(cases[0]).opening, 'Doctor, I have had this symptom for a few days.');
+  assert.equal(
+    toPublicCase(cases[0]).opening,
+    'Doctor, I have had this symptom for a few days and took paracetamol after a pharmacy suggestion.',
+  );
 });
 
 test('normalizes one AI-created case for on-demand case generation', () => {
@@ -64,13 +74,15 @@ test('keeps answer-key test and medicine options private until debrief', () => {
   const publicCase = toPublicCase(caseFile);
   assert.equal(Object.hasOwn(publicCase, 'tests'), false);
   assert.equal(Object.hasOwn(publicCase, 'medications'), false);
+  assert.equal(Object.hasOwn(publicCase, 'pharmacyMedicine'), false);
+  assert.match(publicCase.opening, /paracetamol/i);
 });
 
 test('adds the Doctor greeting once to patient opening speech', () => {
   const [caseFile] = normalizeGeneratedCases({
-    cases: [makeCase({ opening: 'Doctor... I have felt tired this week.' })],
+    cases: [makeCase({ opening: 'Doctor... I have felt tired this week and took paracetamol.' })],
   }, 'opening');
-  assert.equal(toPublicCase(caseFile).opening, 'Doctor, I have felt tired this week.');
+  assert.equal(toPublicCase(caseFile).opening, 'Doctor, I have felt tired this week and took paracetamol.');
 });
 
 test('routes natural duration questions to the onset and duration answer', () => {
@@ -110,13 +122,29 @@ test('rejects image-based investigations', () => {
   );
 });
 
-test('rejects references outside NICE and NHS', () => {
+test('rejects references outside supported official guideline publishers', () => {
   assert.throws(
     () => normalizeGeneratedCases(makeBatch({
       references: [{ title: 'Untrusted source', url: 'https://example.com/guidance' }],
     }), 'batch1234'),
-    /NICE or NHS/,
+    /NICE, NHS, ESC, AHA, GINA, or GOLD/,
   );
+});
+
+test('accepts supported guideline publishers and names the actual publisher', () => {
+  for (const [url, publisher] of [
+    ['https://www.nice.org.uk/guidance/ng000', 'National Institute for Health and Care Excellence (NICE)'],
+    ['https://www.escardio.org/Guidelines', 'European Society of Cardiology (ESC)'],
+    ['https://professional.heart.org/en/guidelines-and-statements', 'American Heart Association (AHA)'],
+    ['https://ginasthma.org/gina-reports/', 'Global Initiative for Asthma (GINA)'],
+    ['https://goldcopd.org/', 'Global Initiative for Chronic Obstructive Lung Disease (GOLD)'],
+  ]) {
+    const [caseFile] = normalizeGeneratedCases(makeBatch({
+      references: [{ title: 'Official guideline', url }],
+    }), 'guidelines');
+    assert.equal(caseFile.references[0].publisher, publisher);
+    assert.equal(toPublicCase(caseFile).references[0].url, url);
+  }
 });
 
 test('rejects generated medication dose details', () => {
@@ -125,6 +153,25 @@ test('rejects generated medication dose details', () => {
       medications: [{ name: 'Example medicine 5 mg', indication: 'Optional educational discussion.' }],
     }), 'batch1234'),
     /must not include doses/,
+  );
+});
+
+test('rejects pharmacy medicine dosing and requires it in speech and history', () => {
+  assert.throws(
+    () => normalizeGeneratedCases(makeBatch({
+      pharmacyMedicine: { name: 'paracetamol 500 mg', reason: 'Pain relief.', reportedEffect: 'No change.' },
+    }), 'batch1234'),
+    /must not include dosing or use instructions/,
+  );
+  assert.throws(
+    () => normalizeGeneratedCases(makeBatch({
+      pharmacyMedicine: { name: 'paracetamol', reason: 'I took it twice daily.', reportedEffect: 'No change.' },
+    }), 'batch1234'),
+    /must not include dosing or use instructions/,
+  );
+  assert.throws(
+    () => normalizeGeneratedCases(makeBatch({ opening: 'I have had this symptom for a few days.' }), 'batch1234'),
+    /must mention the pharmacy medicine/,
   );
 });
 

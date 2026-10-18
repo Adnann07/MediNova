@@ -106,6 +106,38 @@ export function retrieveRelevantPassages(chunks, topic, limit = 6) {
   return selected;
 }
 
+export function retrieveRepresentativePassages(chunks, limit = 8) {
+  if (!chunks.length || limit < 1) return [];
+  const tokenized = chunks.map((chunk) => tokenize(chunk.text));
+  const documentFrequency = new Map();
+  for (const tokens of tokenized) {
+    for (const term of new Set(tokens)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+  }
+  const scored = chunks.map((chunk, index) => {
+    const uniqueTerms = new Set(tokenized[index]);
+    const score = [...uniqueTerms].reduce((total, term) => (
+      total + Math.log(1 + chunks.length / (documentFrequency.get(term) ?? 1))
+    ), 0);
+    return { chunk, score };
+  }).sort((left, right) => right.score - left.score);
+
+  const selected = [];
+  const selectedPages = new Set();
+  for (const item of scored) {
+    const pageKey = `${item.chunk.documentName}\u0000${item.chunk.pageNumber}`;
+    if (selectedPages.has(pageKey)) continue;
+    selected.push(item.chunk);
+    selectedPages.add(pageKey);
+    if (selected.length === limit) return selected;
+  }
+  for (const item of scored) {
+    if (selected.includes(item.chunk)) continue;
+    selected.push(item.chunk);
+    if (selected.length === limit) break;
+  }
+  return selected;
+}
+
 export function parseDoctorDiscussion(text, sources, speakerOrder = Array.from({ length: 3 }, () => discussionDoctors.map(({ id }) => id)).flat()) {
   const cleanText = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   let result;

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { matchPatientTopic } from '../backend/cases.mjs';
 
-const apiBase = 'http://127.0.0.1:8787/api';
+const apiBase = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8787/api';
 const normalizeOrderName = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function Icon({ name, size = 18 }) {
@@ -110,7 +110,7 @@ function TrainingRoom() {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const caseFile = cases.find((item) => item.id === caseId);
-  const askedTopics = useMemo(() => new Set(messages.filter((message) => message.role === 'doctor' && message.topic !== 'rapport').map((message) => message.topic)), [messages]);
+  const doctorQuestionCount = messages.filter((message) => message.role === 'doctor').length;
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
@@ -119,16 +119,26 @@ function TrainingRoom() {
 
   useEffect(() => {
     let cancelled = false;
+    const requestedCaseId = new URLSearchParams(window.location.search).get('case');
     fetch(`${apiBase}/cases`)
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || `Could not generate cases (HTTP ${response.status}).`);
-        return result.cases;
+        let generatedCases = result.cases;
+        if (requestedCaseId && !generatedCases.some((item) => item.id === requestedCaseId)) {
+          const caseResponse = await fetch(`${apiBase}/cases/${encodeURIComponent(requestedCaseId)}`);
+          const caseResult = await caseResponse.json();
+          if (!caseResponse.ok) throw new Error(caseResult.error || `Could not load selected case (HTTP ${caseResponse.status}).`);
+          generatedCases = [...generatedCases, caseResult.case];
+        }
+        return generatedCases;
       })
       .then((generatedCases) => {
         if (cancelled) return;
         setCases(generatedCases);
-        setCaseId(generatedCases[0]?.id || '');
+        setCaseId(requestedCaseId && generatedCases.some((item) => item.id === requestedCaseId)
+          ? requestedCaseId
+          : generatedCases[0]?.id || '');
       })
       .catch((error) => {
         if (!cancelled) setCasesError(error.message || 'Could not load AI-generated cases.');
@@ -342,7 +352,7 @@ function TrainingRoom() {
 
   async function submitDebrief(event) {
     event.preventDefault();
-    if (assessmentLoading || !impression.trim() || !clinicalPlan.trim() || !labOrders.length || askedTopics.size < 2) return;
+    if (assessmentLoading || !impression.trim() || !clinicalPlan.trim() || !labOrders.length || doctorQuestionCount < 1) return;
     setAssessmentLoading(true);
     setAssessmentError('');
     try {
@@ -394,7 +404,7 @@ function TrainingRoom() {
         <header className="sim-topbar">
           <a className="sim-brand" href="#" aria-label="MediNova home"><span className="sim-brand-mark"><Icon name="cross" size={18} /></span><span>medi<span className="brand-nova">nova</span></span></a>
           <div className="topbar-center"><span className="topbar-breadcrumb">SIMULATION</span><span className="topbar-slash">/</span><strong>Case debrief</strong></div>
-          <nav className="discussion-nav" aria-label="Main navigation"><a href="/">Practice room</a><a href="/discussion">Scientific discussion</a></nav>
+          <nav className="discussion-nav" aria-label="Main navigation"><a href="/">Practice room</a><a href="/discussion">Scientific discussion</a><a href="/case-generator">Generate from PDFs</a><a href="/image-assessment">Image assessment</a><a href="/report-assessment">Lab report</a></nav>
           <span className="training-chip"><span /> PRACTICE MODE</span>
         </header>
         <main className="debrief-page">
@@ -419,6 +429,16 @@ function TrainingRoom() {
               <div className="debrief-status"><span className="case-tag">{caseFile.category}</span><span className="preview-engine"><span /> AI assessment · Web-referenced</span></div>
               <h2>{caseFile.title}</h2>
               <div className="answer-reveal answer-good"><div className="reveal-icon"><Icon name="spark" size={17} /></div><div><span>REASONING REVIEW <EvidenceLinks ids={debrief.diagnosis_evidence_ids} references={debrief.references} /></span><strong>{debrief.diagnosis_assessment}</strong></div></div>
+              <section className="pharmacy-medicine-review" aria-labelledby="pharmacy-medicine-heading">
+                <div className="pharmacy-medicine-heading">
+                  <div><span id="pharmacy-medicine-heading">MEDICINE ALREADY TAKEN</span><strong>{debrief.pharmacy_medicine_assessment.medicine}</strong></div>
+                  <span className={`medicine-status medicine-status-${debrief.pharmacy_medicine_assessment.status}`}>
+                    {debrief.pharmacy_medicine_assessment.status.replaceAll('_', ' ')}
+                  </span>
+                </div>
+                <p>{debrief.pharmacy_medicine_assessment.rationale} <EvidenceLinks ids={debrief.pharmacy_medicine_assessment.evidence_ids} references={debrief.references} /></p>
+                <small>Evidence-linked educational review only; not advice to start, stop, or change a medicine.</small>
+              </section>
               <div className="decision-review">
                 <div><span>TEST CHOICE & RESULT INTERPRETATION <EvidenceLinks ids={debrief.investigation_evidence_ids} references={debrief.references} /></span><p>{debrief.investigation_assessment}</p></div>
                 <div><span>NEXT STEP & MEDICINE PLAN <EvidenceLinks ids={debrief.plan_evidence_ids} references={debrief.references} /></span><p>{debrief.plan_assessment}</p></div>
@@ -442,7 +462,7 @@ function TrainingRoom() {
                 <div><span>ROOM TO GROW</span>{debrief.growth_areas.map((item, index) => <p className="feedback-point" key={`growth-${index}`}>{item.text} <EvidenceLinks ids={item.evidence_ids} references={debrief.references} /></p>)}</div>
               </div>
               <div className="next-step"><span>NEXT TIME</span><p>{debrief.next_time} <EvidenceLinks ids={debrief.next_time_evidence_ids} references={debrief.references} /></p></div>
-              <div className="reference-list"><div className="reference-heading">WEB REFERENCES RETRIEVED FOR THIS ASSESSMENT</div>{debrief.references.map((reference) => <a href={reference.url} target="_blank" rel="noreferrer" key={reference.id}><span>{reference.id}</span><span><strong>{reference.title}</strong><small>{reference.publisher} · Open source <Icon name="arrow" size={12} /></small></span></a>)}</div>
+              <div className="reference-list"><div className="reference-heading">OFFICIAL GUIDANCE RETRIEVED AND CITED FOR THIS ASSESSMENT</div><p className="reference-context">Assessment evidence is fetched from the case-linked guideline pages below. Supported publishers include NICE, NHS, ESC, AHA, GINA and GOLD; only sources actually retrieved for this case are cited.</p>{debrief.references.map((reference) => <a href={reference.url} target="_blank" rel="noreferrer" key={reference.id}><span>{reference.id}</span><span><strong>{reference.title}</strong><small>{reference.publisher} · Retrieved for this assessment · Open source <Icon name="arrow" size={12} /></small></span></a>)}{debrief.unavailable_references?.map((reference) => <div className="reference-unavailable" key={reference.id}><strong>{reference.id} · {reference.publisher}: {reference.title}</strong><small>Not used in the assessment because this page could not be retrieved ({reference.reason}).</small></div>)}</div>
               <div className="learning-note"><Icon name="shield" size={17} /><p>{caseFile.learning} This educational feedback can be incomplete or wrong; verify it against the linked guidance and qualified supervision.</p></div>
             </div>
           </section>
@@ -457,7 +477,7 @@ function TrainingRoom() {
       <header className="sim-topbar">
         <a className="sim-brand" href="#" aria-label="MediNova home"><span className="sim-brand-mark"><Icon name="cross" size={18} /></span><span>medi<span className="brand-nova">nova</span></span></a>
         <div className="topbar-center"><span className="topbar-breadcrumb">TRAINING ROOM</span><span className="topbar-slash">/</span><strong>Practice case</strong></div>
-        <nav className="discussion-nav" aria-label="Main navigation"><a href="/" aria-current="page">Practice room</a><a href="/discussion">Scientific discussion</a></nav>
+        <nav className="discussion-nav" aria-label="Main navigation"><a href="/" aria-current="page">Practice room</a><a href="/discussion">Scientific discussion</a><a href="/case-generator">Generate from PDFs</a><a href="/image-assessment">Image assessment</a><a href="/report-assessment">Lab report</a></nav>
         <span className="training-chip"><span /> PRACTICE MODE</span>
       </header>
       <main className="training-page">
@@ -489,6 +509,11 @@ function TrainingRoom() {
               <div><span className="quote-label">IN THEIR OWN WORDS</span><p>{caseFile.opening}</p></div>
               <button className={`voice-button ${speaking ? 'voice-active' : ''}`} onClick={() => speak(caseFile.opening)} aria-label={speaking ? 'Stop patient voice' : 'Replay patient voice'} title={speaking ? 'Stop voice' : 'Replay patient statement'}><Icon name={speaking ? 'stop' : 'sound'} size={17} />{speaking ? 'Stop' : 'Replay'}</button>
             </div>
+            <section className="practice-guidelines" aria-label="Assessment guideline sources">
+              <div><span>ASSESSMENT GUIDELINES</span><small>Retrieved and cited in your debrief</small></div>
+              <ul>{caseFile.references.map((reference) => <li key={reference.id}><a href={reference.url} target="_blank" rel="noreferrer">{reference.publisher}: {reference.title}</a></li>)}</ul>
+              <p>Evidence for this case is fetched from these official links. Supported sources include NICE, NHS, ESC, AHA, GINA and GOLD; only applicable retrieved guidance is shown.</p>
+            </section>
             {audioError && <p className="audio-note" role="status">{audioError}</p>}
             <div className="conversation-head"><div><span className="conversation-title">THE CONVERSATION</span><span className="conversation-subtitle">{messages.length ? `${messages.filter((message) => message.role === 'doctor').length} questions asked` : 'Your interview starts here'}</span></div><span className="privacy-chip"><Icon name="shield" size={13} /> SIMULATED</span></div>
             <div className="conversation-log" aria-live="polite">
@@ -539,9 +564,9 @@ function TrainingRoom() {
               <label className="plan-label" htmlFor="clinical-plan">TEST INTERPRETATION & NEXT STEP</label>
               <textarea id="clinical-plan" value={clinicalPlan} onChange={(event) => setClinicalPlan(event.target.value)} placeholder="Interpret the history and results. What would you do next in this fictional case?" aria-label="Your test interpretation and next clinical decision" rows="3" disabled={assessmentLoading || labLoading || medicationLoading} />
             </div>
-            <button className="debrief-button" onClick={submitDebrief} disabled={assessmentLoading || labLoading || medicationLoading || askedTopics.size < 2 || !labOrders.length || !impression.trim() || !clinicalPlan.trim()}><span>{assessmentLoading ? 'Retrieving references & assessing your reasoning…' : 'Finish & review my reasoning'}</span><Icon name={assessmentLoading ? 'clock' : 'arrow'} size={16} /></button>
-            <p className={`debrief-prerequisite ${assessmentError ? 'assessment-error' : ''}`} role={assessmentError ? 'alert' : 'status'}>{assessmentError || (askedTopics.size < 2 ? 'Explore at least 2 areas before your debrief.' : !labOrders.length ? 'Order and review at least one simulated test.' : !impression.trim() ? 'Add a working impression when you feel ready.' : !clinicalPlan.trim() ? 'Add your interpretation and next-step plan.' : 'Your reference pattern stays hidden until assessment completes.')}</p>
-            <div className="engine-note"><span className="engine-indicator" /><span>AI assessment <i>·</i> Web references required</span><Icon name="spark" size={14} /></div>
+            <button className="debrief-button" onClick={submitDebrief} disabled={assessmentLoading || labLoading || medicationLoading || doctorQuestionCount < 1 || !labOrders.length || !impression.trim() || !clinicalPlan.trim()}><span>{assessmentLoading ? 'Retrieving references & assessing your reasoning…' : 'Finish & review my reasoning'}</span><Icon name={assessmentLoading ? 'clock' : 'arrow'} size={16} /></button>
+            <p className={`debrief-prerequisite ${assessmentError ? 'assessment-error' : ''}`} role={assessmentError ? 'alert' : 'status'}>{assessmentError || (doctorQuestionCount < 1 ? 'Ask your patient one question before your debrief.' : !labOrders.length ? 'Order and review at least one simulated test.' : !impression.trim() ? 'Add a working impression when you feel ready.' : !clinicalPlan.trim() ? 'Add your interpretation and next-step plan.' : 'Your reference pattern stays hidden until assessment completes.')}</p>
+            <div className="engine-note"><span className="engine-indicator" /><span>AI assessment <i>·</i> NICE / NHS / ESC / AHA / GINA / GOLD evidence</span><Icon name="spark" size={14} /></div>
           </aside>
         </div>
         <footer className="training-footer"><span>Practice, reflect, repeat. <strong>That's how confidence is built.</strong></span><span>Fictional educational simulation <i>·</i> Not for diagnosis or treatment</span></footer>
